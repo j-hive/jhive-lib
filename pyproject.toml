@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "jhive-lib"
+version = "0.1.0"
+description = "Library of J-HIVE Common Functions and Routines"
+authors = ["Your Name <you@example.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+numpy = "^1.26.4"
+astropy = "^6.0.1"
+scipy = "^1.13.0"
+pydantic = "^2.7.1"
+pandas = "^2.2.2"
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.4.0"
+isort = "^5.13.2"
+pytest = "^8.1.1"
+jupyter = "^1.0.0"
+ipython = "^8.23.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
