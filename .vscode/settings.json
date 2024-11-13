@@ -10,12 +10,19 @@
         "FICL",
         "grizli",
         "JWST",
-        "pixscale"
+        "pixscale",
+        "zeropoint"
     ],
     "cSpell.ignoreWords": [
+        "EXPTIME",
+        "amax",
+        "clearp",
         "gmtime",
+        "hdul",
         "levelname",
         "levelno",
-        "tqdm"
+        "nddata",
+        "tqdm",
+        "writeto"
     ]
 }
