@@ -49,6 +49,7 @@ def get_alternate_filter_names(filter: str) -> list[str]:
     """
 
     return [
+        filter,
         f"{filter}-clear",
         f"{filter}-clearp",
         f"clear-{filter}",

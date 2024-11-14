@@ -232,14 +232,14 @@ def get_position(input_catalog: Table, object: int) -> SkyCoord:
 
 
 def get_size(
-    input_catalog: Table, catalog_version: str, object: int, pixscale: tuple[int, int]
+    catalog: Table, catalog_version: str, object: int, pixscale: tuple[int, int]
 ) -> int:
     """Calculate the square pixel length of an image containing an object, from
     its cataloged Kron radius.
 
     Parameters
     ----------
-    input_catalog : Table
+    catalog : Table
         Catalog detailing each identified object in a field.
     catalog_version : str
         Version of cataloging, e.g. 'dja-v7.2'.
@@ -257,10 +257,10 @@ def get_size(
     # Expecting DJA catalog version keys to get kron radius
     if "dja" in catalog_version:
         # Get Kron radius from catalog
-        if "kron_radius_circ" in input_catalog.keys():
-            kron_radius = input_catalog[object]["kron_radius_circ"]
+        if "kron_radius_circ" in catalog.keys():
+            kron_radius = catalog[object]["kron_radius_circ"]
         else:
-            kron_radius = input_catalog[object]["kron_radius"]
+            kron_radius = catalog[object]["kron_radius"]
 
         # Calculate image size from scale factor
         image_size = int(kron_radius / np.nanmax(pixscale) * KRON_SCALE_FACTOR)
