@@ -20,7 +20,6 @@ from pydantic import BaseModel, StringConstraints
 # Constants
 
 
-
 MINIMUM_IMAGE_SIZE = 32
 """Minimum pixel length of square stamp image.
 """
@@ -113,6 +112,26 @@ def get_fits_data(
     return image, headers
 
 
+def get_all_objects(catalog_path: Path) -> list[int]:
+    """Get a list of all object integer IDs in a catalog.
+
+    Parameters
+    ----------
+    catalog_path : Path
+        Path to input catalog FITS file.
+
+    Returns
+    -------
+    list[int]
+        List of all integer IDs corresponding to each object in catalog.
+    """
+    # Read input catalog
+    catalog = Table.read(catalog_path)
+
+    # Return list of IDs as integers
+    return [int(id_object) - 1 for id_object in catalog["id"]]
+
+
 ## Calculation
 
 
@@ -190,7 +209,7 @@ def get_zeropoint(headers: fits.Header, magnitude_system: str = "AB") -> float:
             raise NotImplementedError(
                 f"Magnitude system {magnitude_system} not implemented."
             )
-        
+
 
 def get_position(input_catalog: Table, object: int) -> SkyCoord:
     """Retrieve the RA and Dec of an object in its catalog as a SkyCoord object.
