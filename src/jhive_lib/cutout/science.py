@@ -12,8 +12,23 @@ import numpy as np
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.nddata.utils import Cutout2D
+from astropy.table import Table
 from astropy.wcs import WCS
 from pydantic import BaseModel, StringConstraints
+
+
+# Constants
+
+
+
+MINIMUM_IMAGE_SIZE = 32
+"""Minimum pixel length of square stamp image.
+"""
+
+
+KRON_SCALE_FACTOR = 3
+"""Scale factor by which to multiply Kron radius for image size.
+"""
 
 
 # Classes
@@ -58,6 +73,9 @@ class FICL(BaseModel):
             [self.field, self.image_version, self.catalog_version, self.filter]
         )
 
+    def get_fic(self) -> str:
+        return "_".join([self.field, self.image_version, self.catalog_version])
+
 
 # Functions
 
@@ -96,6 +114,143 @@ def get_fits_data(
 
 
 ## Calculation
+
+
+def get_pixscale(headers: fits.Header):
+    """Get an observation's pixscale from its FITS image frame.
+
+    Used because not every frame has the same pixel scale. For the most
+    part, long wavelength filtered observations have scales of 0.04 "/pix,
+    and short wavelength filters have scales of 0.02 "/pix.
+
+    Parameters
+    ----------
+    headers : fits.Header
+        Headers object for corresponding FITS file.
+
+    Returns
+    -------
+    tuple[float, float]
+        Pixel scales along x, y axes, in "/px.
+
+    Raises
+    ------
+    KeyError
+        Coordinate transformation matrix element headers missing from frame.
+    """
+    # Raise error if keys not found in header
+    if any([header not in headers for header in ["CD1_1", "CD2_2", "CD1_2", "CD2_1"]]):
+        raise KeyError("Science frame missing coordinate transformation matrix header.")
+
+    # Calculate and set pixel scales
+    pixscale_x = np.sqrt(headers["CD1_1"] ** 2 + headers["CD1_2"] ** 2) * 3600
+    pixscale_y = np.sqrt(headers["CD2_1"] ** 2 + headers["CD2_2"] ** 2) * 3600
+    return (pixscale_x, pixscale_y)
+
+
+def get_zeropoint(headers: fits.Header, magnitude_system: str = "AB") -> float:
+    """Calculate the zeropoint of an observation.
+
+    If the observation's headers contains the keyword 'ZP', this will be the
+    returned value, otherwise, calculate from the 'AB' or 'ST' magnitude system
+    formulas.
+
+    Parameters
+    ----------
+    headers : fits.Header
+        Headers of this observation's FITS file.
+    magnitude_system : str, optional
+        Magnitude system by which to calculate zeropoint, by default "AB".
+
+    Returns
+    -------
+    float
+        Zeropoint of this observation.
+
+    Raises
+    ------
+    NotImplementedError
+        Unrecognized magnitude system. Only 'AB' and 'ST' implemented.
+    """
+    # If zeropoint stored in headers, return
+    if "ZP" in headers:
+        return headers["ZP"]
+
+    # Otherwise, calculate zeropoint from magnitude system
+    match magnitude_system:
+        case "AB":
+            return (
+                -2.5 * np.log10(headers["PHOTFLAM"])
+                - 5 * (np.log10(headers["PHOTPLAM"]))
+                - 2.408
+            )
+        case "ST":
+            return -2.5 * np.log10(headers["PHOTFLAM"]) - 21.1
+        case _:
+            raise NotImplementedError(
+                f"Magnitude system {magnitude_system} not implemented."
+            )
+        
+
+def get_position(input_catalog: Table, object: int) -> SkyCoord:
+    """Retrieve the RA and Dec of an object in its catalog as a SkyCoord object.
+
+    Parameters
+    ----------
+    input_catalog : Table
+        Catalog detailing each identified object in a field.
+    object : int
+        Integer ID of object in catalog.
+
+    Returns
+    -------
+    SkyCoord
+        Position of object as a SkyCoord astropy object.
+    """
+    return SkyCoord(
+        ra=input_catalog[object]["ra"], dec=input_catalog[object]["dec"], unit="deg"
+    )
+
+
+def get_size(
+    input_catalog: Table, catalog_version: str, object: int, pixscale: tuple[int, int]
+) -> int:
+    """Calculate the square pixel length of an image containing an object, from
+    its cataloged Kron radius.
+
+    Parameters
+    ----------
+    input_catalog : Table
+        Catalog detailing each identified object in a field.
+    catalog_version : str
+        Version of cataloging, e.g. 'dja-v7.2'.
+    object : int
+        Integer ID of object in catalog.
+    pixscale : tuple[int, int]
+        Pixel scale along x-axis and y-axis of the observation, in
+        arcseconds/pixel.
+
+    Returns
+    -------
+    int
+        Number of pixels in each edge of a square image containing this object.
+    """
+    # Expecting DJA catalog version keys to get kron radius
+    if "dja" in catalog_version:
+        # Get Kron radius from catalog
+        if "kron_radius_circ" in input_catalog.keys():
+            kron_radius = input_catalog[object]["kron_radius_circ"]
+        else:
+            kron_radius = input_catalog[object]["kron_radius"]
+
+        # Calculate image size from scale factor
+        image_size = int(kron_radius / np.nanmax(pixscale) * KRON_SCALE_FACTOR)
+
+        # Return maximum between calculated and minimum image size
+        return np.nanmax([image_size, MINIMUM_IMAGE_SIZE])
+    # Other catalog versions may store their kron radius elsewhere
+    else:
+        return MINIMUM_IMAGE_SIZE
 
 
 def get_central_flux(
