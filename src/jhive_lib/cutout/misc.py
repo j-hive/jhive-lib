@@ -1,4 +1,4 @@
-"""TODO
+"""Miscellaneous utility functions.
 """
 
 # Imports

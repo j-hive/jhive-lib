@@ -1,4 +1,4 @@
-"""TODO
+"""Product generation functions.
 """
 
 # Imports

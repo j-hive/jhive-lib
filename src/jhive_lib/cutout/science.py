@@ -1,4 +1,4 @@
-"""TODO
+"""Scientific calculation and file functions.
 """
 
 # Imports
@@ -11,9 +11,7 @@ from typing import Annotated
 import numpy as np
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
-from astropy.nddata.utils import Cutout2D
 from astropy.table import Table
-from astropy.wcs import WCS
 from pydantic import BaseModel, StringConstraints
 
 
@@ -25,7 +23,7 @@ MINIMUM_IMAGE_SIZE = 32
 """
 
 
-KRON_SCALE_FACTOR = 3
+KRON_SCALE_FACTOR = 10
 """Scale factor by which to multiply Kron radius for image size.
 """
 
@@ -263,7 +261,7 @@ def get_size(
             kron_radius = catalog[object]["kron_radius"]
 
         # Calculate image size from scale factor
-        image_size = int(kron_radius / np.nanmax(pixscale) * KRON_SCALE_FACTOR)
+        image_size = int(kron_radius * KRON_SCALE_FACTOR)
 
         # Return maximum between calculated and minimum image size
         return np.nanmax([image_size, MINIMUM_IMAGE_SIZE])
