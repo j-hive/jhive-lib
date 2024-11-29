@@ -12,8 +12,6 @@ from astropy.io import fits
 from astropy.nddata.utils import Cutout2D
 from astropy.wcs import WCS
 
-from . import science
-
 
 # Functions
 
@@ -22,11 +20,9 @@ def make_stamp(
     path: Path,
     image: np.ndarray,
     wcs: WCS,
-    zeropoint: float,
-    pixscale: tuple[int, int],
     position: SkyCoord,
     image_size: int,
-    store_key: str | None = None,
+    headers_dict: dict[str, int | float] | None = None,
 ):
     """Create the stamp for a single object.
 
@@ -43,22 +39,16 @@ def make_stamp(
         2D float image data array from input science file.
     wcs : WCS
         Coordinate system object from input science file.
-    zeropoint : float
-        Brightness zeropoint from input science file.
-    pixscale : tuple[int, int]
-        Pixel scales along each axis from input science file, in "/px.
     position : SkyCoord
         Coordinates of object in sky.
     image_size : int
         Number of pixels along one dimension of square stamp.
-    store_key : str | None, optional
-        Header key to store information on successful fits, by default None
-        (N/A).
+    headers_dict : dict[str, int | float] | None, optional
+        Extra headers to store in stamp, as a dict from key to value, by default
+        None (don't add any non-WCS headers).
 
     Raises
     ------
-    NotImplementedError
-        Unknown information to store in headers on successful stamp.
     ValueError
         Cutout missing nonzero data or non-square dimensions (likely on the edge
         of the original image).
@@ -67,37 +57,25 @@ def make_stamp(
     stamp = Cutout2D(data=image, position=position, size=image_size, wcs=wcs)
 
     # Get nonzero and shape correctness of stamp
-    stamp_has_nonzero_data = np.amax(stamp.data) > 0
+    max_zero_fraction = 0.3
+    zero_ratio = len(np.where(stamp.data == 0.0)) / len(stamp.data.flatten())
+    stamp_has_nonzero_data = zero_ratio <= max_zero_fraction
     stamp_is_correct_shape = stamp.data.shape == (image_size, image_size)
 
     # Write stamp to disk if image nonzero and of correct shape
     if stamp_has_nonzero_data and stamp_is_correct_shape:
+        # Store headers fromm WCS and passed dict
         stamp_headers = stamp.wcs.to_header()
-        stamp_headers["EXPTIME"] = 1
-        stamp_headers["ZP"] = zeropoint
+        if headers_dict is not None:
+            for header, value in headers_dict.items():
+                stamp_headers[header] = value
 
-        # Store extra information in headers if requested
-        if store_key is not None:
-            match store_key:
-                case "SB":
-                    stamp_headers[store_key] = science.get_central_flux(
-                        image=image, pixscale=pixscale, zeropoint=zeropoint
-                    )
-
-                case _:
-                    raise NotImplementedError(
-                        f"'{store_key}' unknown information to store in stamp"
-                    )
-
-        # Wrote stamp to FITS file
+        # Write stamp to FITS file
         stamp_hdul = fits.PrimaryHDU(data=stamp.data, header=stamp_headers)
         stamp_hdul.writeto(path, overwrite=True)
 
     # Otherwise raise error to skip object
     elif not stamp_has_nonzero_data:
-        raise ValueError(f"missing nonzero data")
+        raise ValueError(f"zero pixels {int(zero_ratio * 100)}% of stamp")
     else:
-        raise ValueError(
-            f"got dimensions {stamp.data.shape}, "
-            + f"expected ({image_size}, {image_size})"
-        )
+        raise ValueError(f"dimensions {stamp.data.shape} non-square")
