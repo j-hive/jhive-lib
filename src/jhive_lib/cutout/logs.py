@@ -169,9 +169,9 @@ class StreamFormatter(UTCFormatter):
 # Functions
 
 
-def create_logger(
+def setup(
     logger: logging.Logger = logging.getLogger(),
-    filename: str | Path = ".log",
+    path: str | Path = ".log",
     level: str = logging._levelToName[DEBUG],
     max_bytes: int = LOGGER_MAX_BYTES,
     backup_count: int = LOGGER_BACKUP_COUNT,
@@ -182,7 +182,7 @@ def create_logger(
     ----------
     logger : Logger, optional
         Logger object to create or update, by default a new logger.
-    filename : str | Path, optional
+    path : str | Path, optional
         Name or path to file to log to, by default `.log`.
     level : str, optional
         Logging level to output, by default `WARNING`.
@@ -208,7 +208,7 @@ def create_logger(
 
     # Setup rotating log file handler
     handler = logging.handlers.RotatingFileHandler(
-        filename=filename, maxBytes=max_bytes, backupCount=backup_count
+        filename=path, maxBytes=max_bytes, backupCount=backup_count
     )
     handler.setFormatter(FileFormatter())
     handler.setLevel(level)
