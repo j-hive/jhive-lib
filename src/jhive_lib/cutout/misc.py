@@ -4,26 +4,153 @@
 # Imports
 
 
-from datetime import datetime
 from pathlib import Path
+from datetime import datetime
 
 import numpy as np
-from astropy.io import fits
 
-
-# Constants
-
-
-DEFAULT_CATALOG_VERSION = "dja-v7.2"
-"""Default cataloging version, corresponding to `{F}-{I}-fix_phot_apcorr.fits
-photometric catalog FITS table files.
-"""
+from . import science
 
 
 # Functions
 
 
+## Primitive
+
+
+def get_str_from_datetime(date_time: datetime) -> str:
+    """Get a string representation of a datetime, in the format
+    'YYYYMMDDTHHMMSS'.
+
+    Parameters
+    ----------
+    date_time : datetime
+        Datetime to convert to str.
+
+    Returns
+    -------
+    str
+        String representation of datetime.
+    """
+    return date_time.strftime("%Y%m%dT%H%M%S")
+
+
+def get_str_from_process_id(process_id: int) -> str:
+    """Get a string representation of a process ID, in the format '001', with
+    two leading zeroes.
+
+    Parameters
+    ----------
+    process_id : int
+        Number to convert to string.
+
+    Returns
+    -------
+    str
+        Process ID as string with leading zeroes.
+    """
+    return str(process_id).rjust(3, "0")
+
+
+def get_str_from_pixscale(pixscale: tuple[int, int]) -> str:
+    """Get a pixel scale as a string.
+
+    Parameters
+    ----------
+    pixscale : tuple[int,int]
+        Pixel scale along x and y axes, respectively, in arcseconds per pixel.
+
+    Returns
+    -------
+    str
+        Pixel scale as a string, in milli-arcseconds per pixel (only expressing
+        'mas').
+    """
+    # Get maximum pixel scale from pair
+    max_pixscale = np.nanmax(pixscale)
+
+    # Return pixel scale in milli-arcseconds, as a str
+    return str(round(max_pixscale * 1000)) + "mas"
+
+
+def get_unique(items: list) -> list:
+    """Get the unique elements in a list of elements, as a sorted list.
+
+    Parameters
+    ----------
+    items : list
+        List of elements to be sorted.
+
+    Returns
+    -------
+    list
+        Sorted list of unique elements.
+    """
+    not_nan_items = []
+
+    # Remove any NaNs from list
+    for item in items:
+        if isinstance(item, float) and np.isnan(item):
+            continue
+        else:
+            not_nan_items.append(item)
+
+    # Return unique items in list, sorted
+    return sorted(set(not_nan_items))
+
+
+def get_normalized(
+    data: np.ndarray, scale: int | float = 1.0, dtype: type = float
+) -> np.ndarray:
+    """Get a numpy array normalized from its min to max, as a numpy array from 0
+    to scale.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Array to be normalized.
+    scale : float, optional
+        Scale to normalize to, by default 1.0 so that the final range is 0 to 1.
+    dtype : type, optional
+        Type of data of normalized array, by default float.
+
+    Returns
+    -------
+    np.ndarray
+        Array normalized from 0 to 1.
+    """
+    return np.array((data - data.min()) / data.ptp() * scale, dtype=int)
+
+
 ## Path
+
+
+def get_path_object(path: str | Path, resolve: bool = True) -> Path:
+    """Get a Path object pointing to `path`.
+
+    Parameters
+    ----------
+    path : str | Path
+        Path to file or directory.
+    resolve : bool, optional
+        Resolve the full path to this object, by default True.
+
+    Returns
+    -------
+    Path
+        Path object representing this path.
+    """
+    # Get Path object if passed string
+    if isinstance(path, str):
+        path_object = Path(path)
+    else:
+        path_object = path
+
+    # Return resolved path if passed
+    if resolve:
+        return path_object.resolve()
+    else:
+        return path_object
 
 
 def get_alternate_filter_names(filter: str) -> list[str]:
@@ -82,260 +209,70 @@ def get_alternate_end_tags() -> list[str]:
     return ["drc", "drz"]
 
 
-## Setting
+# FICLO
 
 
-def get_priority_setting(
-    name: str, cli_settings: dict, file_settings: dict
-) -> bool | int | Path | list[str] | list[int] | None:
-    """Get a setting's value from CLI call or YAML file, in preference of the
-    CLI setting value, and None if not found.
-
-    Parameters
-    ----------
-    name : str
-        Name of setting.
-    cli_settings : dict
-        Settings passed from CLI call.
-    file_settings : dict
-        Settings read from YAML file.
-
-    Returns
-    -------
-    bool | int | Path | list[str] | list[int] | None
-        Resolved prioritized setting, if found.
-    """
-    # Return setting from CLI call if set
-    if cli_settings[name] is not None:
-        return cli_settings[name]
-
-    # Return setting from YAML file if set
-    elif name in file_settings:
-        return file_settings[name]
-
-    # Return setting from YAML file if set with space separators
-    elif name.replace("_", " ") in file_settings:
-        return file_settings[name.replace("_", " ")]
-
-    # Return None if unset
-
-
-def get_priority_sub_setting(
-    sub: str, name: str, cli_settings: dict, file_settings: dict
-) -> bool | None:
-    """Get the priority value for a stage or remake setting from values passed
-    from a terminal call and a settings file.
-
-    Parameters
-    ----------
-    sub : str
-        Sub-setting, one of 'stage' or 'remake'.
-    name : str
-        Name of stage or product.
-    cli_settings : dict
-        Settings passed from CLI call.
-    file_settings : dict
-        Settings passed from YAML file.
-
-    Returns
-    -------
-    bool | None
-        Priority stage or remake setting, if found in either CLI call or YAML
-        file.
-    """
-    # Get key prefix from sub-setting name
-    if sub == "stages":
-        prefix = "skip"
-    else:
-        prefix = "remake"
-
-    # Return opposite of flag from CLI call if set
-    if cli_settings[f"{prefix}_{name}"] is not None:
-        return not cli_settings[f"{prefix}_{name}"]
-
-    # Return flag from YAML file if set
-    elif sub in file_settings:
-        if name in file_settings[sub]:
-            return True
-        else:
-            return False
-
-    # Return None if unset
-
-
-def validate_batch_settings(
-    process_count: int | None,
-    process_id: int | None,
+def get_objects(
+    path: Path,
+    process_id: int,
+    process_count: int,
+    objects: list[int] | None,
     first_object: int | None,
     last_object: int | None,
-):
-    """Validate batch mode settings for a MorphFITS program run.
+) -> list[int]:
+    """Get a list of objects for a FICL, as a list of integer IDs from the
+    corresponding photometric catalog.
 
     Parameters
     ----------
-    process_count : int | None
-        Number of processes in batch, must be greater than 0.
-    process_id : int | None
-        ID of process in batch, must be greater than 0 and less than total
-        number of processes.
+    path : Path
+        Path to photometric catalog.
+    process_count : int
+        Number of processes in batch.
+    process_id : int
+        ID of process in batch.
+    objects : list[int] | None
+        List of object IDs.
+        Note this setting overrides the first and last object settings.
     first_object : int | None
-        ID of first object in batch range, must be greater than 0 and less than
-        last (possible) object.
+        ID of first object in batch.
     last_object : int | None
-        ID of last object in batch range, must be greater than first (possible)
-        object and less than last possible object.
-    """
-    # Terminate if invalid number of processes
-    if process_count is not None:
-        assert process_count > 0, f"Invalid # processes {process_count}."
-
-    # Terminate if invalid process ID
-    if process_id is not None:
-        assert process_id >= 0, f"Invalid process ID {process_id}."
-        if process_count is not None:
-            assert (
-                process_id < process_count
-            ), f"Invalid process ID {process_id} for # processes {process_count}."
-
-    # Terminate if invalid first object
-    if first_object is not None:
-        assert first_object > 0, f"Invalid first object ID {first_object}."
-
-    # Terminate if invalid last object
-    if last_object is not None:
-        assert last_object > 0, f"Invalid last object ID {last_object}."
-
-    # Terminate if invalid object range
-    if (first_object is not None) and (last_object is not None):
-        assert (
-            first_object <= last_object
-        ), f"Invalid object range {first_object} to {last_object}."
-
-
-def get_unique_batch_limits(
-    process_id: int, n_process: int, n_items: int
-) -> tuple[int, int]:
-    """Produce the minimum and maximum items for a process given the number of
-    items to process, the number of processes, and the process id. The min and
-    max indices will be unique based on only these three parameters.
-
-    Parameters
-    ----------
-    process_id : int
-        The process id (ranging from 0 to n_process-1)
-    n_process : int
-        The number of processes
-    n_items : int
-        The number of items to process
+        ID of last object in batch.
 
     Returns
     -------
-    tuple[int, int]
-        The min and max index to process, of the form [min, max)
-
+    list[int]
+        List of object IDs corresponding to the 'id' key in the FICL's
+        photometric catalog.
     """
+    # Set base objects as all possible objects if not specifically listed
+    if objects is None:
+        # Get all possible objects from photometric catalog
+        sorted_objects = sorted(science.get_all_objects(input_catalog_path=path))
 
-    # Checking if valid process
-    if process_id >= n_process:
-        raise ValueError(
-            f"process_id ({process_id}) can not be greater than {n_process - 1}"
-        )
+        # Remove all objects before first object
+        if first_object is not None:
+            while sorted_objects[0] < first_object:
+                sorted_objects.pop(0)
 
-    # Setting number of items in this process
-    n_items_process = n_items // n_process
-    if process_id < (n_items % n_process):
-        n_items_process += 1
+        # Remove all objects after last object
+        if last_object is not None:
+            while sorted_objects[-1] > last_object:
+                sorted_objects.pop()
 
-    # Setting Start, Stop Indices
-    start_index = process_id * (n_items // n_process) + min(
-        process_id, n_items % n_process
-    )
-    stop_index = start_index + n_items_process
+    # Set base objects if specifically listed
+    else:
+        sorted_objects = sorted(objects)
 
-    return start_index, stop_index
+    # Get start index from base count and process settings
+    total_object_count = len(sorted_objects)
+    start = process_id * (total_object_count // process_count)
+    start += min(process_id, total_object_count % process_count)
 
+    # Get stop index from start index and expected count
+    object_count = total_object_count // process_count
+    object_count += process_id < (total_object_count % process_count)
+    stop = start + object_count
 
-## Data
-
-
-def get_str_from_datetime(date_time: datetime) -> str:
-    """Get a string representation of a datetime, in the format
-    'YYYYMMDDTHHMMSS'.
-
-    Parameters
-    ----------
-    date_time : datetime
-        Datetime to convert to str.
-
-    Returns
-    -------
-    str
-        String representation of datetime.
-    """
-    return date_time.strftime("%Y%m%dT%H%M%S")
-
-
-def get_str_from_process_id(process_id: int) -> str:
-    """Get a string representation of a process ID, in the format '01', with one
-    leading zero if the number is one digit.
-
-    Parameters
-    ----------
-    process_id : int
-        Number to convert to string.
-
-    Returns
-    -------
-    str
-        Process ID as string with leading zero.
-    """
-    return str(process_id).rjust(2, "0")
-
-
-def get_unique(items: list) -> list:
-    """Get the unique elements in a list of elements, as a sorted list.
-
-    Parameters
-    ----------
-    items : list
-        List of elements to be sorted.
-
-    Returns
-    -------
-    list
-        Sorted list of unique elements.
-    """
-    not_nan_items = []
-
-    # Remove any NaNs from list
-    for item in items:
-        if isinstance(item, float) and np.isnan(item):
-            continue
-        else:
-            not_nan_items.append(item)
-
-    # Return unique items in list, sorted
-    return sorted(set(not_nan_items))
-
-
-def get_normalized(
-    data: np.ndarray, scale: int | float = 1.0, dtype: type = float
-) -> np.ndarray:
-    """Get a numpy array normalized from its min to max, as a numpy array from 0
-    to scale.
-
-    Parameters
-    ----------
-    data : np.ndarray
-        Array to be normalized.
-    scale : float, optional
-        Scale to normalize to, by default 1.0 so that the final range is 0 to 1.
-    dtype : type, optional
-        Type of data of normalized array, by default float.
-
-    Returns
-    -------
-    np.ndarray
-        Array normalized from 0 to 1.
-    """
-    return np.array((data - data.min()) / data.ptp() * scale, dtype=int)
+    # Return list of objects for this process
+    return sorted_objects[start:stop]
