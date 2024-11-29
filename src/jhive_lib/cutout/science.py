@@ -379,7 +379,8 @@ def get_integrated_magnitude(
     integrated_magnitude = get_catalog_datum(
         "mag_auto", float, row, input_catalog, object
     )
-    assert not np.isnan(integrated_magnitude), "magnitude NaN"
+    if np.isnan(integrated_magnitude):
+        raise ValueError("magnitude NaN")
     return integrated_magnitude
 
 

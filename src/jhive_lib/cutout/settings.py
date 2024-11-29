@@ -64,11 +64,11 @@ class FICL(BaseModel):
     failed: list[PositiveInt] = []
 
     def __init__(self, **kwargs):
-        temp_logger.info("Loading FICL.")
-
         # Validate required files
-        assert kwargs["catalog"].is_file(), "photometric catalog missing"
-        assert kwargs["science"].is_file(), "science frame missing"
+        if not kwargs["catalog"].is_file():
+            raise FileNotFoundError("photometric catalog missing")
+        if not kwargs["science"].is_file():
+            raise FileNotFoundError("science frame missing")
 
         # Get values for each primitive setting
         field = kwargs.get("field")
@@ -113,7 +113,14 @@ class FICL(BaseModel):
     def __eq__(self, other) -> bool:
         return (isinstance(other, FICL)) and (str(self) == str(other))
 
-    def __dict__(self) -> dict[str, str | list[int] | tuple[float, float]]:
+    def to_dict(self) -> dict[str, str | list[int] | tuple[float, float]]:
+        """Represent configuration object as a dict.
+
+        Returns
+        -------
+        dict[str, str | list[int] | tuple[float, float]]
+            Representation of configuration object.
+        """
         return {
             "field": self.field,
             "image version": self.image_version,
@@ -187,24 +194,39 @@ class StageSettings(BaseModel):
         # Initialize instance
         super().__init__(**settings)
 
-    def __dict__(self) -> list[str]:
-        # Add each active stage to list
-        settings = []
-        if self.setup:
-            settings.append("setup")
-        if self.product:
-            settings.append("product")
-        if self.main:
-            settings.append("main")
-        if self.cleanup:
-            settings.append("cleanup")
+    def to_dict(self) -> dict[str, list[str]]:
+        """Represent settings object as a dict.
 
-        # Return list representation
+        Returns
+        -------
+        dict[str, list[str]]
+            Representation of settings object.
+        """
+        # Initialize dict representation
+        settings = {"stages": []}
+
+        # Add each active stage
+        if self.setup:
+            settings["stages"].append("setup")
+        if self.product:
+            settings["stages"].append("product")
+        if self.main:
+            settings["stages"].append("main")
+        if self.cleanup:
+            settings["stages"].append("cleanup")
+
+        # Describe if all or no stages run
+        if len(settings["stages"]) == len(self.__dict__):
+            settings["stages"] = "all"
+        if len(settings["stages"]) < 1:
+            settings["stages"] = "none"
+
+        # Return dict representation
         return settings
 
+    @staticmethod
     def get(key: str, **kwargs) -> bool | None:
-        """Get the value for a setting, preferring the value passed through the
-        CLI over the YAML.
+        """Get the value for a stage setting from CLI and YAML kwargs.
 
         Parameters
         ----------
@@ -214,7 +236,7 @@ class StageSettings(BaseModel):
         Returns
         -------
         bool | None
-            Stage setting, if found.
+            Setting, preferring CLI over YAML, if found.
         """
         # Get stage setting from CLI
         if f"skip_{key}" in kwargs:
@@ -258,20 +280,35 @@ class RemakeSettings(BaseModel):
         # Initialize instance
         super().__init__(**settings)
 
-    def __dict__(self) -> list[str]:
-        # Add each remake to list
-        settings = []
-        if self.products:
-            settings.append("products")
-        if self.main:
-            settings.append("main")
+    def to_dict(self) -> list[str]:
+        """Represent settings object as a dict.
 
-        # Return list representation
+        Returns
+        -------
+        dict[str, list[str]]
+            Representation of settings object.
+        """
+        # Initialize dict representation
+        settings = {"remake": []}
+
+        # Add each product to remake
+        if self.products:
+            settings["remake"].append("products")
+        if self.main:
+            settings["remake"].append("main")
+
+        # Describe if all or no products remade
+        if len(settings["remake"]) == len(self.__dict__):
+            settings["remake"] = "all"
+        if len(settings["remake"]) < 1:
+            settings["remake"] = "none"
+
+        # Return dict representation
         return settings
 
+    @staticmethod
     def get(key: str, **kwargs) -> bool | None:
-        """Get the value for a setting, preferring the value passed through the
-        CLI over the YAML.
+        """Get the value for a remake setting from CLI and YAML kwargs.
 
         Parameters
         ----------
@@ -281,7 +318,7 @@ class RemakeSettings(BaseModel):
         Returns
         -------
         bool | None
-            Remake setting, if found.
+            Setting, preferring CLI over YAML, if found.
         """
         # Get remake setting from CLI
         if f"remake_{key}" in kwargs:
@@ -357,11 +394,14 @@ class RuntimeSettings(BaseModel):
         super().__init__(**settings)
 
         # Validate batch settings
-        assert (
-            self.process_id < process_count
-        ), f"process ID {self.process_id} > # processes {self.process_count}"
+        if self.process_id >= self.process_count:
+            raise ValueError(
+                f"process ID {self.process_id} > # processes {self.process_count}"
+            )
 
         # Get values for each model
+        temp_logger.info("Loading FICLs.")
+
         # NOTE Child classes of this class MUST pass these kwargs to the init
         # function of its super class, for each FICL
         # Catalog path for FICL, with kw: "F_I_C_L_catalog"
@@ -373,64 +413,84 @@ class RuntimeSettings(BaseModel):
         filters = kwargs.get("filters")
         objects = kwargs.get("objects")
 
+        # Validate any FICLs set
+        if (
+            (fields is None)
+            or (imvers is None)
+            or (catvers is None)
+            or (filters is None)
+        ):
+            raise KeyError("FICL settings missing")
+
         # Iterate over each permutation of FICL settings
         for ficl_permutation in itertools.product(fields, imvers, catvers, filters):
-            # Skip permutation if missing catalog or science path
-            ficl_str = "_".join(ficl_permutation)
-            if (f"{ficl_str}_catalog" not in kwargs) or (
-                f"{ficl_str}_science" not in kwargs
-            ):
-                continue
-
-            # Initialize dict to unpack
-            ficl_attributes = {
-                "field": ficl_permutation[0],
-                "image_version": ficl_permutation[1],
-                "catalog_version": ficl_permutation[2],
-                "filter": ficl_permutation[3],
-                "objects": objects,
-                "process_id": self.process_id,
-                "process_count": self.process_count,
-                "first_object": first_object,
-                "last_object": last_object,
-                "catalog": kwargs[f"{ficl_str}_catalog"],
-                "science": kwargs[f"{ficl_str}_science"],
-            }
-
-            # Add FICL if valid
             try:
+                # Skip permutation if missing catalog or science path
+                ficl_str = "_".join(ficl_permutation)
+                if (f"{ficl_str}_catalog" not in kwargs) or (
+                    f"{ficl_str}_science" not in kwargs
+                ):
+                    raise KeyError(f"input files missing")
+
+                # Initialize dict to unpack
+                ficl_attributes = {
+                    "field": ficl_permutation[0],
+                    "image_version": ficl_permutation[1],
+                    "catalog_version": ficl_permutation[2],
+                    "filter": ficl_permutation[3],
+                    "objects": objects,
+                    "process_id": self.process_id,
+                    "process_count": self.process_count,
+                    "first_object": first_object,
+                    "last_object": last_object,
+                    "catalog": kwargs[f"{ficl_str}_catalog"],
+                    "science": kwargs[f"{ficl_str}_science"],
+                }
+
+                # Add FICL if valid
                 ficls.append(FICL(**ficl_attributes))
                 temp_logger.info(f"Loaded FICL {ficls[-1]}.")
-            except:
-                continue
+            except Exception as e:
+                temp_logger.warning(f"Skipping FICL {ficl_str}: {e}.")
 
-    def __dict__(self) -> dict[str, int | str | datetime | dict | list]:
-        # Add primitive attributes to dict
+    def to_dict(self) -> dict[str, int | str | datetime | dict | list]:
+        """Represent settings object as a dict.
+
+        Returns
+        -------
+        dict[str, int | str | datetime | dict | list]
+            Representation of settings object.
+        """
+        # Initialize dict representation
         settings = {
             "started": self.date_time,
-            "logging level": self.log_level,
-            "progress bar": "on" if self.progress_bar else "off",
+            "logging": self.log_level,
+            "progress": "show" if self.progress_bar else "hide",
         }
 
         # Add batch mode parameters
         if self.process_count > 1:
             settings["batch mode"] = {
-                "process ID": self.process_id,
-                "# processes": self.process_count,
+                "process": self.process_id + 1,
+                "out of": self.process_count,
             }
 
         # Add stages as a list of stages ran
         if self.stages is not None:
-            settings["stages"] = self.stages.__dict__
+            settings |= self.stages.to_dict()
 
         # Add remake flags as a list of products remade
         if self.remake is not None:
-            settings["remake"] = self.remake.__dict__
+            settings |= self.remake.to_dict()
 
         # Add FICLs as a list of dicts
         settings["ficls"] = []
         for ficl in self.ficls:
-            settings["ficls"].append(ficl.__dict__)
+            settings["ficls"].append(ficl.to_dict())
+
+        # Describe if no FICLs run
+        if len(settings["ficls"]) < 1:
+            settings["ficls"] = "none"
 
         # Return dict representation
         return settings
@@ -486,7 +546,7 @@ class RuntimeSettings(BaseModel):
         path : Path
             Path to which to write settings.
         """
-        yaml.dump(self.__dict__, open(path, mode="a"), sort_keys=False)
+        yaml.dump(self.to_dict(), open(path, mode="a"), sort_keys=False)
 
 
 class ScienceSettings(BaseModel):
@@ -513,7 +573,7 @@ class ScienceSettings(BaseModel):
         scale = ScienceSettings.get("scale", **kwargs)
 
         # Initialize dict to unpack
-        settings = {"minimum": minimum, "scale": scale}
+        settings = {}
 
         # Add each configured setting
         if minimum is not None:
@@ -524,16 +584,23 @@ class ScienceSettings(BaseModel):
         # Initialize instance
         super().__init__(**settings)
 
-    def __dict__(self) -> dict[str, int | float]:
-        # Add primitive attributes to dict
-        settings = {"minimum": self.minimum, "scale": self.scale}
+    def to_dict(self) -> dict[str, bool | int | float | str]:
+        """Represent settings object as a dict.
+
+        Returns
+        -------
+        dict[str, bool | int | float | str]
+            Representation of settings object.
+        """
+        # Initialize dict representation
+        settings = {"science": {"minimum": self.minimum, "scale": self.scale}}
 
         # Return dict representation
         return settings
 
-    def get(key: str, **kwargs) -> bool | None:
-        """Get the value for a setting, preferring the value passed through the
-        CLI over the YAML.
+    @staticmethod
+    def get(key: str, **kwargs) -> bool | int | float | str | None:
+        """Get the value for a science setting from CLI and YAML kwargs.
 
         Parameters
         ----------
@@ -542,8 +609,8 @@ class ScienceSettings(BaseModel):
 
         Returns
         -------
-        bool | None
-            Science setting, if found.
+        bool | int | float | str | None
+            Setting, preferring CLI over YAML, if found.
         """
         # Get science setting from CLI
         if key in kwargs:
@@ -561,7 +628,7 @@ class ScienceSettings(BaseModel):
         path : Path
             Path to which to write settings.
         """
-        yaml.dump(self.__dict__, open(path, mode="a"), sort_keys=False)
+        yaml.dump(self.to_dict(), open(path, mode="a"), sort_keys=False)
 
 
 # Functions
@@ -579,29 +646,37 @@ def get_settings(**kwargs) -> tuple[RuntimeSettings, ScienceSettings]:
     tuple[RuntimeSettings, ScienceSettings]
         Settings for the operation and science of this program, respectively.
     """
-    # Initialize dict to unpack with non-None CLI settings
-    settings = {k: v for k, v in kwargs.items() if v is not None}
-
-    # Merge dict with YAML settings, preferring CLI settings
-    if "config" in kwargs:
-        config_path = misc.get_path_object(kwargs.get("config"))
-        if config_path.is_file():
-            file_kwargs = yaml.safe_load(open(config_path, mode="r"))
-            settings = file_kwargs | settings
-
     # Make temporary logger
     temp_file = tempfile.NamedTemporaryFile()
     logs.setup(path=temp_file.name)
     global temp_logger
     temp_logger = logging.getLogger("SETTINGS")
 
+    # Initialize dict with YAML settings
+    try:
+        config_path = misc.get_path_object(kwargs.get("config"))
+        settings = yaml.safe_load(open(config_path, mode="r"))
+    except:
+        settings = {}
+
+    # Merge dict with non-None CLI settings, preferring CLI
+    try:
+        settings |= {k: v for k, v in kwargs.items() if v is not None}
+    except:
+        pass
+
     # Get runtime and science settings
-    runtime_settings = RuntimeSettings(**settings)
-    science_settings = ScienceSettings(**settings)
+    try:
+        runtime_settings = RuntimeSettings(**settings)
+        science_settings = ScienceSettings(**settings)
+    except Exception as e:
+        temp_logger.error(f"Skipping: {e}.")
 
-    # Remove temporary logger
-    temp_logger.handlers.clear()
-    temp_file.close()
+    # Remove temporary logger and return settings
+    try:
+        temp_logger.handlers.clear()
+        temp_file.close()
 
-    # Return runtime and science settings
-    return runtime_settings, science_settings
+        return runtime_settings, science_settings
+    except:
+        pass
