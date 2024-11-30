@@ -204,23 +204,24 @@ class StageSettings(BaseModel):
             Representation of settings object.
         """
         # Initialize dict representation
-        settings = {"stages": []}
+        stage_key = "stages"
+        settings = {stage_key: []}
 
         # Add each active stage
         if self.setup:
-            settings["stages"].append("setup")
+            settings[stage_key].append("setup")
         if self.product:
-            settings["stages"].append("product")
+            settings[stage_key].append("product")
         if self.main:
-            settings["stages"].append("main")
+            settings[stage_key].append("main")
         if self.cleanup:
-            settings["stages"].append("cleanup")
+            settings[stage_key].append("cleanup")
 
         # Describe if all or no stages run
-        if len(settings["stages"]) == len(self.__dict__):
-            settings["stages"] = "all"
-        if len(settings["stages"]) < 1:
-            settings["stages"] = "none"
+        if len(settings[stage_key]) == len(self.__dict__):
+            settings[stage_key] = "all"
+        if len(settings[stage_key]) < 1:
+            settings[stage_key] = "none"
 
         # Return dict representation
         return settings
@@ -290,19 +291,20 @@ class RemakeSettings(BaseModel):
             Representation of settings object.
         """
         # Initialize dict representation
-        settings = {"remake": []}
+        remake_key = "remake"
+        settings = {remake_key: []}
 
         # Add each product to remake
         if self.products:
-            settings["remake"].append("products")
+            settings[remake_key].append("products")
         if self.main:
-            settings["remake"].append("main")
+            settings[remake_key].append("main")
 
         # Describe if all or no products remade
-        if len(settings["remake"]) == len(self.__dict__):
-            settings["remake"] = "all"
-        if len(settings["remake"]) < 1:
-            settings["remake"] = "none"
+        if len(settings[remake_key]) == len(self.__dict__):
+            settings[remake_key] = "all"
+        if len(settings[remake_key]) < 1:
+            settings[remake_key] = "none"
 
         # Return dict representation
         return settings
