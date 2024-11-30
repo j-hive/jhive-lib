@@ -65,9 +65,10 @@ class FICL(BaseModel):
 
     def __init__(self, **kwargs):
         # Validate required files
-        if not kwargs["catalog"].is_file():
+        catalog_path, science_path = kwargs["catalog"], kwargs["science"]
+        if (not isinstance(catalog_path, Path)) or (not catalog_path.is_file()):
             raise FileNotFoundError("photometric catalog missing")
-        if not kwargs["science"].is_file():
+        if (not isinstance(science_path, Path)) or (not science_path.is_file()):
             raise FileNotFoundError("science frame missing")
 
         # Get values for each primitive setting
@@ -495,7 +496,17 @@ class RuntimeSettings(BaseModel):
         # Return dict representation
         return settings
 
-    def setup(self, paths: list[Path]):
+    def to_yaml(self, path: Path):
+        """Record settings.
+
+        Parameters
+        ----------
+        path : Path
+            Path to which to write settings.
+        """
+        yaml.dump(self.to_dict(), open(path, mode="a"), sort_keys=False)
+
+    def setup_dirs(self, paths: list[Path]):
         """Make missing directories.
 
         Parameters
@@ -506,7 +517,7 @@ class RuntimeSettings(BaseModel):
         for path in paths:
             path.mkdir(parents=True, exist_ok=True)
 
-    def setup_logger(self, path: Path) -> logging.Logger:
+    def setup_logs(self, path: Path) -> logging.Logger:
         """Make missing loggers.
 
         Parameters
@@ -521,7 +532,7 @@ class RuntimeSettings(BaseModel):
         """
         return logs.setup(path=path, level=self.log_level)
 
-    def cleanup(self, paths: list[tuple[Path, list[str]]]):
+    def cleanup_dirs(self, paths: list[tuple[Path, list[str]]]):
         """Remove failed directories.
 
         Parameters
@@ -537,16 +548,6 @@ class RuntimeSettings(BaseModel):
                 if required_sub_path not in sub_paths:
                     shutil.rmtree(path, ignore_errors=True)
                     break
-
-    def write(self, path: Path):
-        """Record settings.
-
-        Parameters
-        ----------
-        path : Path
-            Path to which to write settings.
-        """
-        yaml.dump(self.to_dict(), open(path, mode="a"), sort_keys=False)
 
 
 class ScienceSettings(BaseModel):
@@ -598,6 +599,16 @@ class ScienceSettings(BaseModel):
         # Return dict representation
         return settings
 
+    def to_yaml(self, path: Path):
+        """Record settings.
+
+        Parameters
+        ----------
+        path : Path
+            Path to which to write settings.
+        """
+        yaml.dump(self.to_dict(), open(path, mode="a"), sort_keys=False)
+
     @staticmethod
     def get(key: str, **kwargs) -> bool | int | float | str | None:
         """Get the value for a science setting from CLI and YAML kwargs.
@@ -620,21 +631,11 @@ class ScienceSettings(BaseModel):
         if ("science" in kwargs) and (key in kwargs["science"]):
             return kwargs["science"][key]
 
-    def write(self, path: Path):
-        """Record settings.
-
-        Parameters
-        ----------
-        path : Path
-            Path to which to write settings.
-        """
-        yaml.dump(self.to_dict(), open(path, mode="a"), sort_keys=False)
-
 
 # Functions
 
 
-def get_settings(**kwargs) -> tuple[RuntimeSettings, ScienceSettings]:
+def get(**kwargs) -> tuple[RuntimeSettings, ScienceSettings]:
     """Get settings objects from configurations passed through the CLI call
     and/or YAML configuration file.
 
