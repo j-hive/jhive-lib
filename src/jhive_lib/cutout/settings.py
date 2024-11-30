@@ -363,23 +363,28 @@ class RuntimeSettings(BaseModel):
     ficls: list[FICL] = []
 
     def __init__(self, **kwargs):
+        # Make temporary logger
+        open_temp_logger()
         temp_logger.info("Loading runtime settings.")
+
+        # Initialize dict to unpack
+        settings = get_settings_dict(**kwargs)
 
         # Get values for each primitive setting
         date_time = datetime.now()
-        process_id = kwargs.get("process_id")
-        process_count = kwargs.get("process_count")
-        first_object = kwargs.get("first_object")
-        last_object = kwargs.get("last_object")
-        log_level = kwargs.get("log_level")
-        progress_bar = kwargs.get("progress_bar")
+        process_id = settings.get("process_id")
+        process_count = settings.get("process_count")
+        first_object = settings.get("first_object")
+        last_object = settings.get("last_object")
+        log_level = settings.get("log_level")
+        progress_bar = settings.get("progress_bar")
 
         # Get values for each sub-setting
-        stages = StageSettings(**kwargs)
-        remake = RemakeSettings(**kwargs)
+        stages = StageSettings(**settings)
+        remake = RemakeSettings(**settings)
 
         # Initialize dict to unpack
-        settings = {"date_time": date_time, "stages": stages, "remake": remake}
+        settings |= {"date_time": date_time, "stages": stages, "remake": remake}
 
         # Add each configured setting
         if process_id is not None:
@@ -407,12 +412,11 @@ class RuntimeSettings(BaseModel):
         # function of its super class, for each FICL
         # Catalog path for FICL, with kw: "F_I_C_L_catalog"
         # Science path for FICL, with kw: "F_I_C_L_science"
-        ficls = []
-        fields = kwargs.get("fields")
-        imvers = kwargs.get("image_versions")
-        catvers = kwargs.get("catalog_versions")
-        filters = kwargs.get("filters")
-        objects = kwargs.get("objects")
+        fields = settings.get("fields")
+        imvers = settings.get("image_versions")
+        catvers = settings.get("catalog_versions")
+        filters = settings.get("filters")
+        objects = settings.get("objects")
 
         # Validate any FICLs set
         if (
@@ -428,8 +432,8 @@ class RuntimeSettings(BaseModel):
             try:
                 # Skip permutation if missing catalog or science path
                 ficl_str = "_".join(ficl_permutation)
-                if (f"{ficl_str}_catalog" not in kwargs) or (
-                    f"{ficl_str}_science" not in kwargs
+                if (f"{ficl_str}_catalog" not in settings) or (
+                    f"{ficl_str}_science" not in settings
                 ):
                     raise KeyError(f"input files missing")
 
@@ -444,15 +448,18 @@ class RuntimeSettings(BaseModel):
                     "process_count": self.process_count,
                     "first_object": first_object,
                     "last_object": last_object,
-                    "catalog": kwargs[f"{ficl_str}_catalog"],
-                    "science": kwargs[f"{ficl_str}_science"],
+                    "catalog": settings[f"{ficl_str}_catalog"],
+                    "science": settings[f"{ficl_str}_science"],
                 }
 
                 # Add FICL if valid
-                ficls.append(FICL(**ficl_attributes))
-                temp_logger.info(f"Loaded FICL {ficls[-1]}.")
+                self.ficls.append(FICL(**ficl_attributes))
+                temp_logger.info(f"Loaded FICL {self.ficls[-1]}.")
             except Exception as e:
                 temp_logger.warning(f"Skipping FICL {ficl_str}: {e}.")
+
+        # Remove temporary logger
+        close_temp_logger()
 
     def to_dict(self) -> dict[str, int | str | datetime | dict | list]:
         """Represent settings object as a dict.
@@ -567,14 +574,16 @@ class ScienceSettings(BaseModel):
     scale: PositiveFloat = 20.0
 
     def __init__(self, **kwargs):
+        # Make temporary logger
+        open_temp_logger()
         temp_logger.info("Loading science settings.")
 
-        # Get values for each primitive setting
-        minimum = ScienceSettings.get("minimum", **kwargs)
-        scale = ScienceSettings.get("scale", **kwargs)
-
         # Initialize dict to unpack
-        settings = {}
+        settings = get_settings_dict(**kwargs)
+
+        # Get values for each primitive setting
+        minimum = ScienceSettings.get("minimum", **settings)
+        scale = ScienceSettings.get("scale", **settings)
 
         # Add each configured setting
         if minimum is not None:
@@ -584,6 +593,9 @@ class ScienceSettings(BaseModel):
 
         # Initialize instance
         super().__init__(**settings)
+
+        # Remove temporary logger
+        close_temp_logger()
 
     def to_dict(self) -> dict[str, bool | int | float | str]:
         """Represent settings object as a dict.
@@ -635,27 +647,36 @@ class ScienceSettings(BaseModel):
 # Functions
 
 
-def get(**kwargs) -> tuple[RuntimeSettings, ScienceSettings]:
-    """Get settings objects from configurations passed through the CLI call
-    and/or YAML configuration file.
-
-    If a setting is configured via both CLI and YAML, the CLI setting is
-    preferred.
-
-    Returns
-    -------
-    tuple[RuntimeSettings, ScienceSettings]
-        Settings for the operation and science of this program, respectively.
-    """
-    # Make temporary logger
+def open_temp_logger():
+    """Open a temporary logger object."""
+    # Open temporary file
+    global temp_file
     temp_file = tempfile.NamedTemporaryFile()
+
+    # Open temporary logger
     logs.setup(path=temp_file.name)
     global temp_logger
     temp_logger = logging.getLogger("SETTINGS")
 
+
+def close_temp_logger():
+    """Close opened temporary logger object."""
+    temp_logger.handlers.clear()
+    temp_file.close()
+
+
+def get_settings_dict(**kwargs) -> dict[str,]:
+    """Get a dict of settings from CLI call kwargs.
+
+    Returns
+    -------
+    dict[str,]
+        Settings dict mapping setting keys to their values, from both CLI and
+        YAML, if provided, preferring CLI.
+    """
     # Initialize dict with YAML settings
     try:
-        config_path = misc.get_path_object(kwargs.get("config"))
+        config_path = misc.get_path_object(kwargs["config"])
         settings = yaml.safe_load(open(config_path, mode="r"))
     except:
         settings = {}
@@ -666,18 +687,5 @@ def get(**kwargs) -> tuple[RuntimeSettings, ScienceSettings]:
     except:
         pass
 
-    # Get runtime and science settings
-    try:
-        runtime_settings = RuntimeSettings(**settings)
-        science_settings = ScienceSettings(**settings)
-    except Exception as e:
-        temp_logger.error(f"Skipping: {e}.")
-
-    # Remove temporary logger and return settings
-    try:
-        temp_logger.handlers.clear()
-        temp_file.close()
-
-        return runtime_settings, science_settings
-    except:
-        pass
+    # Return settings dict
+    return settings
