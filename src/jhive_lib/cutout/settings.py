@@ -171,7 +171,12 @@ class StageSettings(BaseModel):
     cleanup: bool = True
 
     def __init__(self, **kwargs):
-        temp_logger.info("Loading stage settings.")
+        inherited = kwargs.get("temp_logger") is not None
+        if not inherited:
+            if "temp_logger" not in globals():
+                global temp_file, temp_logger
+                temp_file, temp_logger = open_temp_logger()
+            temp_logger.info("Loading stage settings.")
 
         # Get values for each setting
         setup = StageSettings.get("setup", **kwargs)
@@ -264,7 +269,12 @@ class RemakeSettings(BaseModel):
     main: bool = False
 
     def __init__(self, **kwargs):
-        temp_logger.info("Loading remake settings.")
+        inherited = kwargs.get("temp_logger") is not None
+        if not inherited:
+            if "temp_logger" not in globals():
+                global temp_file, temp_logger
+                temp_file, temp_logger = open_temp_logger()
+            temp_logger.info("Loading remake settings.")
 
         # Get values for each setting
         products = RemakeSettings.get("products", **kwargs)
@@ -365,9 +375,15 @@ class RuntimeSettings(BaseModel):
     ficls: list[FICL] = []
 
     def __init__(self, **kwargs):
-        # Make temporary logger
-        open_temp_logger()
-        temp_logger.info("Loading runtime settings.")
+        # Make temporary logger if not made in child class
+        inherited = kwargs.get("temp_logger") is not None
+        if "temp_logger" not in globals():
+            global temp_file, temp_logger
+        if inherited:
+            temp_logger = kwargs.get("temp_logger")
+        else:
+            temp_file, temp_logger = open_temp_logger()
+            temp_logger.info("Loading runtime settings.")
 
         # Initialize dict to unpack
         settings = get_settings_dict(**kwargs)
@@ -382,8 +398,8 @@ class RuntimeSettings(BaseModel):
         progress_bar = settings.get("progress_bar")
 
         # Get values for each sub-setting
-        stages = StageSettings(**settings)
-        remake = RemakeSettings(**settings)
+        stages = settings["stages"] if inherited else StageSettings(**settings)
+        remake = settings["remake"] if inherited else RemakeSettings(**settings)
 
         # Initialize dict to unpack
         settings |= {"date_time": date_time, "stages": stages, "remake": remake}
@@ -414,23 +430,16 @@ class RuntimeSettings(BaseModel):
         # function of its super class, for each FICL
         # Catalog path for FICL, with kw: "F_I_C_L_catalog"
         # Science path for FICL, with kw: "F_I_C_L_science"
-        fields = settings.get("fields")
-        imvers = settings.get("image_versions")
-        catvers = settings.get("catalog_versions")
-        filters = settings.get("filters")
-        objects = settings.get("objects")
-
-        # Validate any FICLs set
-        if (
-            (fields is None)
-            or (imvers is None)
-            or (catvers is None)
-            or (filters is None)
-        ):
-            raise KeyError("FICL settings missing")
+        ficlo_settings = get_ficlo_dict(**settings)
 
         # Iterate over each permutation of FICL settings
-        for ficl_permutation in itertools.product(fields, imvers, catvers, filters):
+        ficl_permutations = itertools.product(
+            ficlo_settings["fields"],
+            ficlo_settings["image_versions"],
+            ficlo_settings["catalog_versions"],
+            ficlo_settings["filters"],
+        )
+        for ficl_permutation in ficl_permutations:
             try:
                 # Skip permutation if missing catalog or science path
                 ficl_str = "_".join(ficl_permutation)
@@ -445,7 +454,7 @@ class RuntimeSettings(BaseModel):
                     "image_version": ficl_permutation[1],
                     "catalog_version": ficl_permutation[2],
                     "filter": ficl_permutation[3],
-                    "objects": objects,
+                    "objects": ficlo_settings["objects"],
                     "process_id": self.process_id,
                     "process_count": self.process_count,
                     "first_object": first_object,
@@ -456,12 +465,16 @@ class RuntimeSettings(BaseModel):
 
                 # Add FICL if valid
                 self.ficls.append(FICL(**ficl_attributes))
-                temp_logger.info(f"Loaded FICL {self.ficls[-1]}.")
+
+                temp_logger.info(f"Loaded FICL {ficl_str}.")
             except Exception as e:
                 temp_logger.warning(f"Skipping FICL {ficl_str}: {e}.")
 
         # Remove temporary logger
-        close_temp_logger()
+        if not inherited:
+            close_temp_logger(temp_file=temp_file, temp_logger=temp_logger)
+        if "temp_logger" in globals():
+            del temp_logger
 
     def to_dict(self) -> dict[str, int | str | datetime | dict | list]:
         """Represent settings object as a dict.
@@ -576,9 +589,15 @@ class ScienceSettings(BaseModel):
     scale: PositiveFloat = 20.0
 
     def __init__(self, **kwargs):
-        # Make temporary logger
-        open_temp_logger()
-        temp_logger.info("Loading science settings.")
+        # Make temporary logger if not made in child class
+        inherited = kwargs.get("temp_logger") is not None
+        if "temp_logger" not in globals():
+            global temp_file, temp_logger
+        if inherited:
+            temp_logger = kwargs.get("temp_logger")
+        else:
+            temp_file, temp_logger = open_temp_logger()
+            temp_logger.info("Loading science settings.")
 
         # Initialize dict to unpack
         settings = get_settings_dict(**kwargs)
@@ -597,7 +616,10 @@ class ScienceSettings(BaseModel):
         super().__init__(**settings)
 
         # Remove temporary logger
-        close_temp_logger()
+        if not inherited:
+            close_temp_logger(temp_file=temp_file, temp_logger=temp_logger)
+        if "temp_logger" in globals():
+            del temp_logger
 
     def to_dict(self) -> dict[str, bool | int | float | str]:
         """Represent settings object as a dict.
@@ -649,20 +671,44 @@ class ScienceSettings(BaseModel):
 # Functions
 
 
-def open_temp_logger():
-    """Open a temporary logger object."""
-    # Open temporary file
-    global temp_file
+def open_temp_logger() -> tuple[tempfile.NamedTemporaryFile, logging.Logger]:
+    """Open a temporary logger object.
+
+    Returns
+    -------
+    tuple[NamedTemporaryFile, Logger]
+        Temporary file and logging object.
+
+    Raises
+    ------
+    FileExistsError
+        Temporary logger already created by child class.
+    """
+    # Open and return temporary file and logger
     temp_file = tempfile.NamedTemporaryFile()
-
-    # Open temporary logger
     logs.setup(path=temp_file.name)
-    global temp_logger
     temp_logger = logging.getLogger("SETTINGS")
+    return temp_file, temp_logger
 
 
-def close_temp_logger():
-    """Close opened temporary logger object."""
+def close_temp_logger(
+    temp_file: tempfile.NamedTemporaryFile, temp_logger: logging.Logger
+):
+    """Close opened temporary logger object.
+
+    Parameters
+    ----------
+    temp_file : NamedTemporaryFile
+        Temporary file to close.
+    temp_logger : Logger
+        Temporary logger to close.
+
+    Raises
+    ------
+    FileExistsError
+        Temporary logger to be closed by child class.
+    """
+    # Close temporary logger
     temp_logger.handlers.clear()
     temp_file.close()
 
@@ -691,3 +737,51 @@ def get_settings_dict(**kwargs) -> dict[str,]:
 
     # Return settings dict
     return settings
+
+
+def get_ficlo_dict(**kwargs) -> dict[str, list[str | int] | None]:
+    """Get a dict of FICLO settings from CLI and YAML kwargs.
+
+    Returns
+    -------
+    dict[str, list[str | int] | None]
+        Settings dict mapping FICLO setting names to their values,
+        preferring CLI values over YAML.
+
+    Raises
+    ------
+    KeyError
+        Missing any of FICL keys.
+    """
+    # Get single FICLO settings
+    field = kwargs.get("field")
+    imver = kwargs.get("image_version")
+    catver = kwargs.get("catalog_version")
+    filter = kwargs.get("filter")
+    object = kwargs.get("object")
+
+    # Get multiple FICLO settings
+    fields = kwargs.get("fields") if field is None else [field]
+    imvers = kwargs.get("image_versions") if imver is None else [imver]
+    catvers = kwargs.get("catalog_versions") if catver is None else [catver]
+    filters = kwargs.get("filters") if filter is None else [filter]
+    objects = kwargs.get("objects") if object is None else [object]
+
+    # Validate existence
+    if fields is None:
+        raise KeyError("fields missing")
+    if imvers is None:
+        raise KeyError("image versions missing")
+    if catvers is None:
+        raise KeyError("catalog versions missing")
+    if filters is None:
+        raise KeyError("filters missing")
+
+    # Return as dict
+    return {
+        "fields": fields,
+        "image_versions": imvers,
+        "catalog_versions": catvers,
+        "filters": filters,
+        "objects": objects,
+    }
