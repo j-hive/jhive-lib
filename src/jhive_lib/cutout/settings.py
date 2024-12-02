@@ -250,8 +250,9 @@ class StageSettings(BaseModel):
             return not kwargs[f"skip_{key}"]
 
         # Get stage setting from YAML
-        if "stages" in kwargs:
-            return key in kwargs["stages"]
+        from_yaml = kwargs.get("stages")
+        if from_yaml is not None:
+            return (key in from_yaml) or ("all" in from_yaml)
 
 
 class RemakeSettings(BaseModel):
@@ -338,7 +339,8 @@ class RemakeSettings(BaseModel):
             return kwargs[f"remake_{key}"]
 
         # Get remake setting from YAML
-        if ("remake" in kwargs) and (key in kwargs["remake"]):
+        from_yaml = kwargs.get("remake")
+        if (from_yaml is not None) and ((key in from_yaml) or ("all" in from_yaml)):
             return True
 
 
