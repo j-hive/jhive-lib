@@ -676,8 +676,8 @@ def open_temp_logger() -> tuple[tempfile.NamedTemporaryFile, logging.Logger]:
 
     Returns
     -------
-    tuple[NamedTemporaryFile, Logger]
-        Temporary file and logging object.
+    tuple[NamedTemporaryFile, Logger, Logger]
+        Temporary file, temporary logger, and base logging object.
 
     Raises
     ------
@@ -686,13 +686,15 @@ def open_temp_logger() -> tuple[tempfile.NamedTemporaryFile, logging.Logger]:
     """
     # Open and return temporary file and logger
     temp_file = tempfile.NamedTemporaryFile()
-    logs.setup(path=temp_file.name)
+    base_logger = logs.setup(path=temp_file.name)
     temp_logger = logging.getLogger("SETTINGS")
-    return temp_file, temp_logger
+    return temp_file, temp_logger, base_logger
 
 
 def close_temp_logger(
-    temp_file: tempfile.NamedTemporaryFile, temp_logger: logging.Logger
+    temp_file: tempfile.NamedTemporaryFile,
+    temp_logger: logging.Logger,
+    base_logger: logging.Logger,
 ):
     """Close opened temporary logger object.
 
@@ -702,6 +704,8 @@ def close_temp_logger(
         Temporary file to close.
     temp_logger : Logger
         Temporary logger to close.
+    base_logger : Logger
+        Root logger to close.
 
     Raises
     ------
@@ -709,6 +713,7 @@ def close_temp_logger(
         Temporary logger to be closed by child class.
     """
     # Close temporary logger
+    base_logger.handlers.clear()
     temp_logger.handlers.clear()
     temp_file.close()
 
