@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime
 
 import numpy as np
+from tqdm import tqdm
 
 from . import science
 
@@ -99,27 +100,82 @@ def get_unique(items: list) -> list:
     return sorted(set(not_nan_items))
 
 
-def get_normalized(
-    data: np.ndarray, scale: int | float = 1.0, dtype: type = float
+## Array
+
+
+def get_cropped(image: np.ndarray, size: int) -> np.ndarray:
+    """Get a crop (centered cutout) of an image to a sub-radius within the
+    image.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        Image data, as a 2D array.
+    size : int
+        Length of square image.
+
+    Returns
+    -------
+    np.ndarray
+        Cropped image.
+    """
+    # Return current image if image size unchanged
+    if (image.shape[0] == image.shape[1]) and (image.shape[0] == size):
+        return image
+
+    # Get index of central pixel and number of pixels in half-image
+    center = int(image.shape[0] / 2)
+    radius = int(size / 2)
+
+    # Get and return cropped image
+    cropped_image = image[
+        center - radius : center + radius + 1, center - radius : center + radius + 1
+    ]
+    return cropped_image
+
+
+def get_linear_normalized(
+    data: np.ndarray,
+    min_i: float | None = None,
+    max_i: float | None = None,
+    min_f: float = 0.0,
+    max_f: float = 1.0,
+    dtype: type = float,
 ) -> np.ndarray:
-    """Get a numpy array normalized from its min to max, as a numpy array from 0
-    to scale.
+    """Get a numpy array normalized to a minimum and maximum.
 
     Parameters
     ----------
     data : np.ndarray
         Array to be normalized.
-    scale : float, optional
-        Scale to normalize to, by default 1.0 so that the final range is 0 to 1.
+    min_i : float | None, optional
+        Initial data minimum, by default None (auto).
+    max_i : float | None, optional
+        Initial data maximum, by default None (auto).
+    min_f : float, optional
+        Final data minimum, by default 0.
+    max_f : float, optional
+        Final data maximum, by default 1.
     dtype : type, optional
-        Type of data of normalized array, by default float.
+        Data type of normalized array, by default float.
 
     Returns
     -------
     np.ndarray
         Array normalized from 0 to 1.
     """
-    return np.array((data - data.min()) / data.ptp() * scale, dtype=int)
+    # Get initial min and max if not passed
+    if min_i is None:
+        min_i = np.nanmin(data)
+    if max_i is None:
+        max_i = np.nanmax(data)
+    if max_i == min_i:
+        max_i += 1
+
+    # Return rescaled data
+    return np.array(
+        (data - min_i) / (max_i - min_i) * (max_f - min_f) + min_f, dtype=dtype
+    )
 
 
 ## Path
@@ -276,3 +332,22 @@ def get_objects(
 
     # Return list of objects for this process
     return sorted_objects[start:stop]
+
+
+def get_object_loop(objects: list[int], progress_bar: bool = False) -> tqdm | list[int]:
+    """Get a list-like object of object IDs over which to iterate, i.e. a TQDM
+    object if progress is displayed, and the list of objects otherwise.
+
+    Parameters
+    ----------
+    objects : list[int]
+        List of object IDs over which to iterate.
+    progress_bar : bool, optional
+        Display progress as a loading bar, by default False.
+
+    Returns
+    -------
+    tqdm | list[int]
+        List-like object over which to iterate for program runs.
+    """
+    return tqdm(iterable=objects, unit="obj", leave=False) if progress_bar else objects
