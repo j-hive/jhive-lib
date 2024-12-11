@@ -5,12 +5,12 @@
 
 
 import shutil
-import tempfile
 import itertools
 import logging
+import re
 from pathlib import Path
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self, Any
 
 import yaml
 from pydantic import (
@@ -24,11 +24,49 @@ from pydantic import (
 from . import logs, misc, science
 
 
+# Constants
+
+
+CONFIGURATION_FILE_KEY = "config"
+"""Key of path to configuration YAML file.
+"""
+
+
 # Classes
 
 
-class FICL(BaseModel):
-    """Model representing a single observation science frame.
+class BaseSettings(BaseModel):
+    """Base settings object model."""
+
+    def to_dict(self) -> dict[str,]:
+        return self.__dict__
+
+    @staticmethod
+    def get(key: str, **kwargs) -> Any | None:
+        """Get the value for a setting from user input, preferring CLI-passed
+        values over file-passed values.
+
+        Parameters
+        ----------
+        key : str
+            Name of setting.
+
+        Returns
+        -------
+        Any | None
+            Value of setting, if it is set by user, and None otherwise.
+        """
+        #
+        if key in kwargs:
+            return kwargs.get(key)
+
+        #
+        elif key.replace("_", " ") in kwargs:
+            return kwargs.get(key.replace("_", " "))
+
+
+class FICL(BaseSettings):
+    """Settings for a single scientific observation.
 
     Corresponds to the field, image version, catalog version, and filter of the
     frame.
@@ -71,58 +109,41 @@ class FICL(BaseModel):
         if (not isinstance(science_path, Path)) or (not science_path.is_file()):
             raise FileNotFoundError("science frame missing")
 
-        # Get values for each primitive setting
-        field = kwargs.get("field")
-        image_version = kwargs.get("image_version")
-        catalog_version = kwargs.get("catalog_version")
-        filter = kwargs.get("filter")
-        objects = kwargs.get("objects")
-        process_id = kwargs.get("process_id")
-        process_count = kwargs.get("process_count")
-        first_object = kwargs.get("first_object")
-        last_object = kwargs.get("last_object")
-
-        # Get values for each data setting
-        pixscale = science.get_pixscale(path=kwargs["science"])
-        ficl_objects = misc.get_objects(
-            path=kwargs["catalog"],
-            process_id=process_id,
-            process_count=process_count,
-            objects=objects,
-            first_object=first_object,
-            last_object=last_object,
+        #
+        pixscale = science.get_pixscale(path=science_path)
+        objects = misc.get_objects(
+            path=catalog_path,
+            process_id=kwargs.get("process_id"),
+            process_count=kwargs.get("process_count"),
+            objects=kwargs.get("objects"),
+            first_object=kwargs.get("first_object"),
+            last_object=kwargs.get("last_object"),
         )
 
-        # Initialize dict to unpack
-        settings = {
-            "field": field,
-            "image_version": image_version,
-            "catalog_version": catalog_version,
-            "filter": filter,
+        #
+        model = {
+            "field": kwargs.get("field"),
+            "image_version": kwargs.get("image_version"),
+            "catalog_version": kwargs.get("catalog_version"),
+            "filter": kwargs.get("filter"),
             "pixscale": pixscale,
-            "objects": ficl_objects,
+            "objects": objects,
         }
 
-        # Initialize instance
-        super().__init__(**settings)
+        #
+        super().__init__(**model)
 
     def __str__(self) -> str:
         return "_".join(
             [self.field, self.image_version, self.catalog_version, self.filter]
         )
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: Self) -> bool:
         return (isinstance(other, FICL)) and (str(self) == str(other))
 
     def to_dict(self) -> dict[str, str | list[int] | tuple[float, float]]:
-        """Represent configuration object as a dict.
-
-        Returns
-        -------
-        dict[str, str | list[int] | tuple[float, float]]
-            Representation of configuration object.
-        """
-        return {
+        #
+        model = {
             "field": self.field,
             "image version": self.image_version,
             "catalog version": self.catalog_version,
@@ -131,6 +152,9 @@ class FICL(BaseModel):
             "objects": self.objects,
             "failed": self.failed,
         }
+
+        #
+        return model
 
     def remove(self, objects: list[int]):
         """Remove objects from this FICL's configuration.
@@ -142,12 +166,92 @@ class FICL(BaseModel):
         objects : list[int]
             Integer IDs of objects to remove from FICL.
         """
+        #
         for object in objects:
+            #
             try:
                 self.objects.remove(object)
                 self.failed.append(object)
+
+            #
             except:
                 continue
+
+    @staticmethod
+    def get_sorted(ficls: list[Self]) -> list[Self]:
+        """Get a list of FICLs, sorted by their filter wavelengths.
+
+        Note this function assumes each FICL of same FIC.
+
+        Parameters
+        ----------
+        ficls : list[FICL]
+            List of FICLs to be sorted.
+
+        Returns
+        -------
+        list[FICL]
+            List of FICLs, sorted by filter wavelength, ascending.
+        """
+        # Get dict of FICLs indexed by their filter wavelength (e.g. 200 for f200w-clear)
+        ficls_by_wavelength = {}
+        for ficl in ficls:
+            try:
+                ficls_by_wavelength[int(re.findall(r"\d{3}", ficl.filter)[0])] = ficl
+            except:
+                pass
+
+        # Get list of FICLs sorted by wavelength
+        sorted_ficls = []
+        for filter in sorted(ficls_by_wavelength):
+            sorted_ficls.append(ficls_by_wavelength[filter])
+
+        # Return list of FICLs
+        return sorted_ficls
+
+    @staticmethod
+    def get(key: str, required: bool = True, **kwargs) -> list[int | str] | None:
+        """Get the value for a FICLO setting from CLI and YAML kwargs.
+
+        Parameters
+        ----------
+        key : str
+            Name of setting to get.
+        required : bool, optional
+            Raise error if setting not found, by default True.
+
+        Returns
+        -------
+        list[int | str] | None
+            Setting, preferring CLI over YAML, if found.
+
+        Raises
+        ------
+        KeyError
+            Field, image version, catalog version, or filter missing.
+        """
+        #
+        alt_key = key.replace("_", " ")
+
+        #
+        if key[:-1] in kwargs:
+            return [kwargs[key[:-1]]]
+
+        #
+        elif key in kwargs:
+            return kwargs[key]
+
+        #
+        elif alt_key[:-1] in kwargs:
+            return [kwargs[alt_key[:-1]]]
+
+        #
+        elif alt_key in kwargs:
+            return kwargs[alt_key]
+
+        #
+        elif required:
+            raise KeyError(f"{alt_key} not found")
 
 
 class StageSettings(BaseModel):
@@ -170,86 +274,51 @@ class StageSettings(BaseModel):
     main: bool = True
     cleanup: bool = True
 
-    def __init__(self, **kwargs):
-        inherited = kwargs.get("temp_logger") is not None
-        if not inherited:
-            if "temp_logger" not in globals():
-                global temp_file, temp_logger
-                temp_file, temp_logger = open_temp_logger()
-            temp_logger.info("Loading stage settings.")
+    def __init__(self, **values):
+        #
+        model = {}
 
-        # Get values for each setting
-        setup = StageSettings.get("setup", **kwargs)
-        product = StageSettings.get("product", **kwargs)
-        main = StageSettings.get("main", **kwargs)
-        cleanup = StageSettings.get("cleanup", **kwargs)
+        #
+        primitive_attributes = ["setup", "product", "main", "cleanup"]
+        for attribute in primitive_attributes:
+            model[attribute] = self.get(key=attribute, **values)
 
-        # Initialize dict to unpack
-        settings = {}
+        #
+        super().__init__(**model)
 
-        # Add each configured setting
-        if setup is not None:
-            settings["setup"] = setup
-        if product is not None:
-            settings["product"] = product
-        if main is not None:
-            settings["main"] = main
-        if cleanup is not None:
-            settings["cleanup"] = cleanup
+    def to_dict(self) -> str | list[str]:
+        #
+        if all(self.__dict__.values()):
+            return "all"
 
-        # Initialize instance
-        super().__init__(**settings)
+        #
+        elif not any(self.__dict__.values()):
+            return "none"
 
-    def to_dict(self) -> dict[str, list[str]]:
-        """Represent settings object as a dict.
-
-        Returns
-        -------
-        dict[str, list[str]]
-            Representation of settings object.
-        """
-        # Initialize dict representation
-        stage_key = "stages"
-        settings = {stage_key: []}
-
-        # Add each active stage
-        if self.setup:
-            settings[stage_key].append("setup")
-        if self.product:
-            settings[stage_key].append("product")
-        if self.main:
-            settings[stage_key].append("main")
-        if self.cleanup:
-            settings[stage_key].append("cleanup")
-
-        # Describe if all or no stages run
-        if len(settings[stage_key]) == len(self.__dict__):
-            settings[stage_key] = "all"
-        if len(settings[stage_key]) < 1:
-            settings[stage_key] = "none"
-
-        # Return dict representation
-        return settings
+        #
+        else:
+            return [stage for stage, ran in self.__dict__.items() if ran]
 
     @staticmethod
     def get(key: str, **kwargs) -> bool | None:
-        """Get the value for a stage setting from CLI and YAML kwargs.
+        """Get the value for a remake setting from user input, preferring
+        CLI-passed values over file-passed values.
 
         Parameters
         ----------
         key : str
-            Name of setting to get.
+            Name of setting.
 
         Returns
         -------
         bool | None
-            Setting, preferring CLI over YAML, if found.
+            Value of setting, if it is set by user, and None otherwise.
         """
-        # Get stage setting from CLI
+        # Get setting from CLI
         if f"skip_{key}" in kwargs:
             return not kwargs[f"skip_{key}"]
 
-        # Get stage setting from YAML
+        # Get setting from YAML
         from_yaml = kwargs.get("stages")
         if from_yaml is not None:
             return (key in from_yaml) or ("all" in from_yaml)
@@ -269,83 +338,58 @@ class RemakeSettings(BaseModel):
     products: bool = False
     main: bool = False
 
-    def __init__(self, **kwargs):
-        inherited = kwargs.get("temp_logger") is not None
-        if not inherited:
-            if "temp_logger" not in globals():
-                global temp_file, temp_logger
-                temp_file, temp_logger = open_temp_logger()
-            temp_logger.info("Loading remake settings.")
+    def __init__(self, **values):
+        #
+        model = {}
 
-        # Get values for each setting
-        products = RemakeSettings.get("products", **kwargs)
-        main = RemakeSettings.get("main", **kwargs)
+        #
+        primitive_attributes = ["products", "main"]
+        for attribute in primitive_attributes:
+            model[attribute] = self.get(key=attribute, **values)
 
-        # Initialize dict to unpack
-        settings = {}
+        #
+        super().__init__(**model)
 
-        # Add each configured setting
-        if products is not None:
-            settings["products"] = products
-        if main is not None:
-            settings["main"] = main
+    def to_dict(self) -> str | list[str]:
+        #
+        if all(self.__dict__.values()):
+            return "all"
 
-        # Initialize instance
-        super().__init__(**settings)
+        #
+        elif not any(self.__dict__.values()):
+            return "none"
 
-    def to_dict(self) -> list[str]:
-        """Represent settings object as a dict.
-
-        Returns
-        -------
-        dict[str, list[str]]
-            Representation of settings object.
-        """
-        # Initialize dict representation
-        remake_key = "remake"
-        settings = {remake_key: []}
-
-        # Add each product to remake
-        if self.products:
-            settings[remake_key].append("products")
-        if self.main:
-            settings[remake_key].append("main")
-
-        # Describe if all or no products remade
-        if len(settings[remake_key]) == len(self.__dict__):
-            settings[remake_key] = "all"
-        if len(settings[remake_key]) < 1:
-            settings[remake_key] = "none"
-
-        # Return dict representation
-        return settings
+        #
+        else:
+            return [file_type for file_type, remade in self.__dict__.items() if remade]
 
     @staticmethod
     def get(key: str, **kwargs) -> bool | None:
-        """Get the value for a remake setting from CLI and YAML kwargs.
+        """Get the value for a remake setting from user input, preferring
+        CLI-passed values over file-passed values.
 
         Parameters
         ----------
         key : str
-            Name of setting to get.
+            Name of setting.
 
         Returns
         -------
         bool | None
-            Setting, preferring CLI over YAML, if found.
+            Value of setting, if it is set by user, and None otherwise.
         """
-        # Get remake setting from CLI
+        # Get setting from CLI
         if f"remake_{key}" in kwargs:
             return kwargs[f"remake_{key}"]
 
-        # Get remake setting from YAML
+        # Get setting from YAML
         from_yaml = kwargs.get("remake")
         if (from_yaml is not None) and ((key in from_yaml) or ("all" in from_yaml)):
             return True
 
 
 class RuntimeSettings(BaseModel):
-    """Local and program configurations.
+    """Settings for the runtime of a J-HIVE program.
 
     Attributes
     ----------
@@ -356,15 +400,13 @@ class RuntimeSettings(BaseModel):
     process_count : int
         Number of processes in batch, as a positive integer, by default 1.
     log_level : str
-        Level at which to log, one of standard Python levels, by default info.
+        Level at which to log, one of standard Python levels, by default 'info'.
     progress_bar : bool
         Display progress as a loading bar, by default False.
     stages : StageSettings
         Stages to run.
     remake : RemakeSettings
         Files to remake and overwrite.
-    ficls : list[FICL]
-        FICLs over which to run program, by default empty.
     """
 
     date_time: datetime
@@ -374,208 +416,65 @@ class RuntimeSettings(BaseModel):
     progress_bar: bool = False
     stages: StageSettings
     remake: RemakeSettings
-    ficls: list[FICL] = []
 
-    def __init__(self, **kwargs):
-        # Make temporary logger if not made in child class
-        inherited = kwargs.get("temp_logger") is not None
-        if "temp_logger" not in globals():
-            global temp_file, temp_logger
-        if inherited:
-            temp_logger = kwargs.get("temp_logger")
-        else:
-            temp_file, temp_logger = open_temp_logger()
-            temp_logger.info("Loading runtime settings.")
+    def __init__(self, **values):
+        #
+        model = {"date_time": datetime.now()}
 
-        # Initialize dict to unpack
-        settings = get_settings_dict(**kwargs)
+        #
+        primitive_attributes = [
+            "process_id",
+            "process_count",
+            "log_level",
+            "progress_bar",
+        ]
+        for attribute in primitive_attributes:
+            model |= get_value(key=attribute, **values)
 
-        # Get values for each primitive setting
-        date_time = datetime.now()
-        process_id = settings.get("process_id")
-        process_count = settings.get("process_count")
-        first_object = settings.get("first_object")
-        last_object = settings.get("last_object")
-        log_level = settings.get("log_level")
-        progress_bar = settings.get("progress_bar")
+        #
+        model |= get_value(key="stages", cls=StageSettings, **values)
+        model |= get_value(key="remake", cls=RemakeSettings, **values)
 
-        # Get values for each sub-setting
-        stages = settings["stages"] if inherited else StageSettings(**settings)
-        remake = settings["remake"] if inherited else RemakeSettings(**settings)
+        #
+        super().__init__(**model)
 
-        # Initialize dict to unpack
-        settings |= {"date_time": date_time, "stages": stages, "remake": remake}
-
-        # Add each configured setting
-        if process_id is not None:
-            settings["process_id"] = process_id
-        if process_count is not None:
-            settings["process_count"] = process_count
-        if log_level is not None:
-            settings["log_level"] = log_level
-        if progress_bar is not None:
-            settings["progress_bar"] = progress_bar
-
-        # Initialize instance
-        super().__init__(**settings)
-
-        # Validate batch settings
+        #
         if self.process_id >= self.process_count:
             raise ValueError(
                 f"process ID {self.process_id} > # processes {self.process_count}"
             )
 
-        # Get values for each model
-        temp_logger.info("Loading FICLs.")
-
-        # NOTE Child classes of this class MUST pass these kwargs to the init
-        # function of its super class, for each FICL
-        # Catalog path for FICL, with kw: "F_I_C_L_catalog"
-        # Science path for FICL, with kw: "F_I_C_L_science"
-        ficlo_settings = get_ficlo_dict(**settings)
-
-        # Iterate over each permutation of FICL settings
-        ficl_permutations = itertools.product(
-            ficlo_settings["fields"],
-            ficlo_settings["image_versions"],
-            ficlo_settings["catalog_versions"],
-            ficlo_settings["filters"],
-        )
-        for ficl_permutation in ficl_permutations:
-            try:
-                # Skip permutation if missing catalog or science path
-                ficl_str = "_".join(ficl_permutation)
-                if (f"{ficl_str}_catalog" not in settings) or (
-                    f"{ficl_str}_science" not in settings
-                ):
-                    raise KeyError(f"input files missing")
-
-                # Initialize dict to unpack
-                ficl_attributes = {
-                    "field": ficl_permutation[0],
-                    "image_version": ficl_permutation[1],
-                    "catalog_version": ficl_permutation[2],
-                    "filter": ficl_permutation[3],
-                    "objects": ficlo_settings["objects"],
-                    "process_id": self.process_id,
-                    "process_count": self.process_count,
-                    "first_object": first_object,
-                    "last_object": last_object,
-                    "catalog": settings[f"{ficl_str}_catalog"],
-                    "science": settings[f"{ficl_str}_science"],
-                }
-
-                # Add FICL if valid
-                self.ficls.append(FICL(**ficl_attributes))
-
-                temp_logger.info(f"Loaded FICL {ficl_str}.")
-            except Exception as e:
-                temp_logger.warning(f"Skipping FICL {ficl_str}: {e}.")
-
-        # Remove temporary logger
-        if not inherited:
-            close_temp_logger(temp_file=temp_file, temp_logger=temp_logger)
-        if "temp_logger" in globals():
-            del temp_logger
-
-    def to_dict(self) -> dict[str, int | str | datetime | dict | list]:
-        """Represent settings object as a dict.
-
-        Returns
-        -------
-        dict[str, int | str | datetime | dict | list]
-            Representation of settings object.
-        """
-        # Initialize dict representation
-        settings = {
+    def to_dict(self) -> dict[str,]:
+        #
+        model = {
             "started": self.date_time,
-            "logging": self.log_level,
+            "verbosity": self.log_level,
             "progress": "show" if self.progress_bar else "hide",
         }
 
-        # Add batch mode parameters
+        #
         if self.process_count > 1:
-            settings["batch mode"] = {
+            model["batch mode"] = {
                 "process": self.process_id + 1,
                 "out of": self.process_count,
             }
 
-        # Add stages as a list of stages ran
-        if self.stages is not None:
-            settings |= self.stages.to_dict()
+        #
+        model["stages"] = self.stages.to_dict()
+        model["remade"] = self.remake.to_dict()
 
-        # Add remake flags as a list of products remade
-        if self.remake is not None:
-            settings |= self.remake.to_dict()
-
-        # Add FICLs as a list of dicts
-        settings["ficls"] = []
-        for ficl in self.ficls:
-            settings["ficls"].append(ficl.to_dict())
-
-        # Describe if no FICLs run
-        if len(settings["ficls"]) < 1:
-            settings["ficls"] = "none"
-
-        # Return dict representation
-        return settings
+        #
+        return model
 
     def to_yaml(self, path: Path):
-        """Record settings.
-
-        Parameters
-        ----------
-        path : Path
-            Path to which to write settings.
-        """
         yaml.dump(self.to_dict(), open(path, mode="a"), sort_keys=False)
 
-    def setup_dirs(self, paths: list[Path]):
-        """Make missing directories.
-
-        Parameters
-        ----------
-        paths : list[Path]
-            Paths to required directories.
-        """
-        for path in paths:
-            path.mkdir(parents=True, exist_ok=True)
-
     def setup_logs(self, path: Path) -> logging.Logger:
-        """Make missing loggers.
-
-        Parameters
-        ----------
-        path : Path
-            Path to logging file.
-
-        Returns
-        -------
-        Logger
-            Logging object.
-        """
         return logs.setup(path=path, level=self.log_level)
-
-    def cleanup_dirs(self, paths: list[tuple[Path, list[str]]]):
-        """Remove failed directories.
-
-        Parameters
-        ----------
-        paths : list[tuple[Path, list[str]]]
-            Paths paired with required sub-paths, to be removed if any sub-path
-            not found.
-        """
-        for path, required_sub_paths in paths:
-            sub_paths = [sub_path.name for sub_path in path.iterdir()]
-
-            for required_sub_path in required_sub_paths:
-                if required_sub_path not in sub_paths:
-                    shutil.rmtree(path, ignore_errors=True)
-                    break
 
 
 class ScienceSettings(BaseModel):
-    """Scientific algorithm configurations.
+    """Settings for the scientific algorithms of a J-HIVE program.
 
     Attributes
     ----------
@@ -585,57 +484,170 @@ class ScienceSettings(BaseModel):
     scale : float
         Multiplier on initial radius to determine image size, as a positive
         float, by default 20.0.
+    ficls : list[FICL]
+        FICLs over which to run program, by default empty.
     """
 
     minimum: PositiveInt = 32
     scale: PositiveFloat = 20.0
+    ficls: list[FICL]
+
+    def __init__(self, **values):
+        #
+        model = {"ficls": []}
+
+        #
+        primitive_attributes = ["minimum", "scale"]
+        for attribute in primitive_attributes:
+            model |= get_value(key=attribute, get=ScienceSettings.get, **values)
+
+        #
+        ## NOTE Child classes of this class MUST pass these kwargs to the init
+        ## function of its super class, for each FICL
+        ## Catalog path object for FICL, with kw: "F_I_C_L_catalog"
+        ## Science path object for FICL, with kw: "F_I_C_L_science"
+
+        ##
+        first_object = get_value(key="first_object", **values) | get_value(
+            key="first", **values
+        )
+        last_object = get_value(key="last_object", **values) | get_value(
+            key="last", **values
+        )
+        ficls_attributes = [
+            "fields",
+            "image_versions",
+            "catalog_versions",
+            "filters",
+            "objects",
+        ]
+        ficls_model = [
+            get_value(key=attribute, cls=FICL, **values)[attribute]
+            for attribute in ficls_attributes
+        ]
+
+        ##
+        runtime: RuntimeSettings = values.get("runtime")
+        possible_ficls = itertools.product(*ficls_model[:-1])
+        for possible_ficl in possible_ficls:
+            ##
+            try:
+                ##
+                ficl_str = "_".join(possible_ficl)
+
+                ##
+                if (f"{ficl_str}_catalog" not in values) or (
+                    f"{ficl_str}_science" not in values
+                ):
+                    continue
+
+                ##
+                ficl_model = {
+                    "field": possible_ficl[0],
+                    "image_version": possible_ficl[1],
+                    "catalog_version": possible_ficl[2],
+                    "filter": possible_ficl[3],
+                    "objects": ficls_model[-1],
+                    "process_id": runtime.process_id,
+                    "process_count": runtime.process_count,
+                    "first_object": first_object,
+                    "last_object": last_object,
+                    "catalog": values[f"{ficl_str}_catalog"],
+                    "science": values[f"{ficl_str}_science"],
+                }
+
+                ##
+                model["ficls"].append(FICL(**ficl_model))
+
+            ##
+            except Exception as e:
+                continue
+
+        #
+        super().__init__(**model)
+
+    def to_dict(self) -> dict[str,]:
+        #
+        model = {"ficls": [], "minimum": self.minimum, "scale": self.scale}
+
+        #
+        for ficl in self.ficls:
+            model["ficls"].append(ficl.to_dict())
+
+        #
+        return model
+
+    def to_yaml(self, path: Path):
+        yaml.dump(self.to_dict(), open(path, mode="a"), sort_keys=False)
+
+    @staticmethod
+    def get(key: str, **kwargs) -> Any | None:
+        """Get the value for a science setting from user input, preferring
+        CLI-passed values over file-passed values.
+
+        Parameters
+        ----------
+        key : str
+            Name of setting.
+
+        Returns
+        -------
+        Any | None
+            Value of setting, if it is set by user, and None otherwise.
+        """
+        # Get setting from CLI
+        if key in kwargs:
+            return kwargs[key]
+
+        # Get setting from YAML
+        if ("science" in kwargs) and (key in kwargs["science"]):
+            return kwargs["science"][key]
+
+
+class JHIVESettings(BaseSettings):
+    """Settings for a J-HIVE program.
+
+    Attributes
+    ----------
+    runtime : RuntimeSettings
+        Settings for the runtime of a J-HIVE program.
+    science : ScienceSettings
+        Settings for the scientific algorithms of a J-HIVE program.
+    """
+
+    runtime: RuntimeSettings
+    science: ScienceSettings
 
     def __init__(self, **kwargs):
-        # Make temporary logger if not made in child class
-        inherited = kwargs.get("temp_logger") is not None
-        if "temp_logger" not in globals():
-            global temp_file, temp_logger
-        if inherited:
-            temp_logger = kwargs.get("temp_logger")
-        else:
-            temp_file, temp_logger = open_temp_logger()
-            temp_logger.info("Loading science settings.")
+        #
+        model = {}
 
-        # Initialize dict to unpack
-        settings = get_settings_dict(**kwargs)
+        #
+        values = get_all_values(**kwargs)
 
-        # Get values for each primitive setting
-        minimum = ScienceSettings.get("minimum", **settings)
-        scale = ScienceSettings.get("scale", **settings)
+        #
+        model |= get_value(key="runtime", cls=RuntimeSettings, **values)
+        model |= get_value(key="science", cls=ScienceSettings, **values | model)
 
-        # Add each configured setting
-        if minimum is not None:
-            settings["minimum"] = minimum
-        if scale is not None:
-            settings["scale"] = scale
+        #
+        super().__init__(**model)
 
-        # Initialize instance
-        super().__init__(**settings)
-
-        # Remove temporary logger
-        if not inherited:
-            close_temp_logger(temp_file=temp_file, temp_logger=temp_logger)
-        if "temp_logger" in globals():
-            del temp_logger
-
-    def to_dict(self) -> dict[str, bool | int | float | str]:
+    def to_dict(self) -> dict[str, dict[str,]]:
         """Represent settings object as a dict.
 
         Returns
         -------
-        dict[str, bool | int | float | str]
-            Representation of settings object.
+        dict[str, dict[str,]]
+            Dict representation of settings object.
         """
-        # Initialize dict representation
-        settings = {"science": {"minimum": self.minimum, "scale": self.scale}}
+        #
+        model = {
+            "runtime": self.runtime.to_dict(),
+            "science": self.science.to_dict(),
+        }
 
-        # Return dict representation
-        return settings
+        #
+        return model
 
     def to_yaml(self, path: Path):
         """Record settings.
@@ -645,150 +657,97 @@ class ScienceSettings(BaseModel):
         path : Path
             Path to which to write settings.
         """
-        yaml.dump(self.to_dict(), open(path, mode="a"), sort_keys=False)
+        yaml.dump(self.to_dict(), open(path, mode="w"), sort_keys=False)
 
-    @staticmethod
-    def get(key: str, **kwargs) -> bool | int | float | str | None:
-        """Get the value for a science setting from CLI and YAML kwargs.
+    def setup_dirs(self, dirs: list[Path]):
+        """Make missing directories.
 
         Parameters
         ----------
-        key : str
-            Name of setting to get.
+        dirs : list[Path]
+            Paths to required directories.
+        """
+        for dir in dirs:
+            dir.mkdir(parents=True, exist_ok=True)
+
+    def setup_logs(self, path: Path) -> logging.Logger:
+        """Make missing loggers.
+
+        Parameters
+        ----------
+        path : Path
+            Path to which to output logs, in addition to STDOUT.
 
         Returns
         -------
-        bool | int | float | str | None
-            Setting, preferring CLI over YAML, if found.
+        Logger
+            Logging object.
         """
-        # Get science setting from CLI
-        if key in kwargs:
-            return kwargs[key]
+        return self.runtime.setup_logs(path=path)
 
-        # Get science setting from YAML
-        if ("science" in kwargs) and (key in kwargs["science"]):
-            return kwargs["science"][key]
+    def cleanup_dirs(self, dirs: list[tuple[Path, list[str]]]):
+        """Remove failed directories.
+
+        Parameters
+        ----------
+        dirs : list[tuple[Path, list[str]]]
+            List of (dir, list[file]) pairs, where the first item is a path to a
+            directory, and the second item is a list of filenames required to
+            exist in the directory. If any required files are not found, the
+            directory is removed.
+        """
+        for dir, files in dirs:
+            found = [child.name for child in dir.iterdir()]
+
+            for file in files:
+                if file not in found:
+                    shutil.rmtree(dir, ignore_errors=True)
+                    break
 
 
 # Functions
 
 
-def open_temp_logger() -> tuple[tempfile.NamedTemporaryFile, logging.Logger]:
-    """Open a temporary logger object.
-
-    Returns
-    -------
-    tuple[NamedTemporaryFile, Logger, Logger]
-        Temporary file, temporary logger, and base logging object.
-
-    Raises
-    ------
-    FileExistsError
-        Temporary logger already created by child class.
-    """
-    # Open and return temporary file and logger
-    temp_file = tempfile.NamedTemporaryFile()
-    base_logger = logs.setup(path=temp_file.name)
-    temp_logger = logging.getLogger("SETTINGS")
-    return temp_file, temp_logger, base_logger
-
-
-def close_temp_logger(
-    temp_file: tempfile.NamedTemporaryFile,
-    temp_logger: logging.Logger,
-    base_logger: logging.Logger,
-):
-    """Close opened temporary logger object.
-
-    Parameters
-    ----------
-    temp_file : NamedTemporaryFile
-        Temporary file to close.
-    temp_logger : Logger
-        Temporary logger to close.
-    base_logger : Logger
-        Root logger to close.
-
-    Raises
-    ------
-    FileExistsError
-        Temporary logger to be closed by child class.
-    """
-    # Close temporary logger
-    base_logger.handlers.clear()
-    temp_logger.handlers.clear()
-    temp_file.close()
-
-
-def get_settings_dict(**kwargs) -> dict[str,]:
-    """Get a dict of settings from CLI call kwargs.
+def get_all_values(**kwargs) -> dict[str,]:
+    """Get values for all settings configured by user, preferring CLI-passed
+    values over file-passed values, as a dict.
 
     Returns
     -------
     dict[str,]
-        Settings dict mapping setting keys to their values, from both CLI and
-        YAML, if provided, preferring CLI.
+        Dict from setting names to their values, as set by the user, preferring
+        CLI-passed values over file-passed values.
     """
-    # Initialize dict with YAML settings
+    # Get values for settings from file
     try:
-        config_path = misc.get_path_object(kwargs["config"])
-        settings = yaml.safe_load(open(config_path, mode="r"))
+        config_path = misc.get_path_object(kwargs[CONFIGURATION_FILE_KEY])
+        values = yaml.safe_load(open(config_path, mode="r"))
     except:
-        settings = {}
+        values = {}
 
-    # Merge dict with non-None CLI settings, preferring CLI
+    # Merge with values from CLI, preferring CLI
     try:
-        settings |= {k: v for k, v in kwargs.items() if v is not None}
+        values |= {k: v for k, v in kwargs.items() if v is not None}
     except:
         pass
 
-    # Return settings dict
-    return settings
+    # Return all user-passed settings as dict
+    return values
 
 
-def get_ficlo_dict(**kwargs) -> dict[str, list[str | int] | None]:
-    """Get a dict of FICLO settings from CLI and YAML kwargs.
+def get_value(
+    key: str,
+    cls: type[BaseSettings] = BaseSettings,
+    **values,
+) -> dict[str,]:
+    #
+    if key in values:
+        return {key: cls.get(key, **values)}
 
-    Returns
-    -------
-    dict[str, list[str | int] | None]
-        Settings dict mapping FICLO setting names to their values,
-        preferring CLI values over YAML.
+    #
+    elif cls is BaseSettings:
+        return {}
 
-    Raises
-    ------
-    KeyError
-        Missing any of FICL keys.
-    """
-    # Get single FICLO settings
-    field = kwargs.get("field")
-    imver = kwargs.get("image_version")
-    catver = kwargs.get("catalog_version")
-    filter = kwargs.get("filter")
-    object = kwargs.get("object")
-
-    # Get multiple FICLO settings
-    fields = kwargs.get("fields") if field is None else [field]
-    imvers = kwargs.get("image_versions") if imver is None else [imver]
-    catvers = kwargs.get("catalog_versions") if catver is None else [catver]
-    filters = kwargs.get("filters") if filter is None else [filter]
-    objects = kwargs.get("objects") if object is None else [object]
-
-    # Validate existence
-    if fields is None:
-        raise KeyError("fields missing")
-    if imvers is None:
-        raise KeyError("image versions missing")
-    if catvers is None:
-        raise KeyError("catalog versions missing")
-    if filters is None:
-        raise KeyError("filters missing")
-
-    # Return as dict
-    return {
-        "fields": fields,
-        "image_versions": imvers,
-        "catalog_versions": catvers,
-        "filters": filters,
-        "objects": objects,
-    }
+    #
+    else:
+        return {key: cls(**values)}
