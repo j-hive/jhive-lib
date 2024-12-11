@@ -515,7 +515,7 @@ class ScienceSettings(BaseSettings):
     """
 
     minimum: PositiveInt = 32
-    scale: PositiveFloat = 20.0
+    scale: PositiveFloat = 1.0
     ficls: list[FICL]
 
     def __init__(self, **values):
