@@ -103,7 +103,7 @@ class FICL(BaseSettings):
 
     def __init__(self, **kwargs):
         # Validate required files
-        catalog_path, science_path = kwargs["catalog"], kwargs["science"]
+        catalog_path, science_path = kwargs.get("catalog"), kwargs.get("science")
         if (not isinstance(catalog_path, Path)) or (not catalog_path.is_file()):
             raise FileNotFoundError("photometric catalog missing")
         if (not isinstance(science_path, Path)) or (not science_path.is_file()):
@@ -254,7 +254,7 @@ class FICL(BaseSettings):
             raise KeyError(f"{alt_key} not found")
 
 
-class StageSettings(BaseModel):
+class StageSettings(BaseSettings):
     """Stages to run, as flags.
 
     Attributes
@@ -281,7 +281,10 @@ class StageSettings(BaseModel):
         #
         primitive_attributes = ["setup", "product", "main", "cleanup"]
         for attribute in primitive_attributes:
-            model[attribute] = self.get(key=attribute, **values)
+            ##
+            attribute_value = self.get(key=attribute, **values)
+            if attribute_value is not None:
+                model[attribute] = attribute_value
 
         #
         super().__init__(**model)
@@ -300,8 +303,8 @@ class StageSettings(BaseModel):
             return [stage for stage, ran in self.__dict__.items() if ran]
 
     @staticmethod
-    def get(key: str, **kwargs) -> bool | None:
-        """Get the value for a remake setting from user input, preferring
+    def get(key: str, **kwargs) -> bool | Self | None:
+        """Get the value for a stage setting from user input, preferring
         CLI-passed values over file-passed values.
 
         Parameters
@@ -311,9 +314,19 @@ class StageSettings(BaseModel):
 
         Returns
         -------
-        bool | None
+        bool | Self | None
             Value of setting, if it is set by user, and None otherwise.
         """
+        # Get setting from this or child class
+        if key == "stages":
+            ## This setting object has been made by a child class
+            if (key in kwargs) and isinstance(kwargs.get(key), StageSettings):
+                return kwargs.get(key)
+
+            ## This setting object has not yet been made
+            else:
+                return StageSettings(**kwargs)
+
         # Get setting from CLI
         if f"skip_{key}" in kwargs:
             return not kwargs[f"skip_{key}"]
@@ -324,7 +337,7 @@ class StageSettings(BaseModel):
             return (key in from_yaml) or ("all" in from_yaml)
 
 
-class RemakeSettings(BaseModel):
+class RemakeSettings(BaseSettings):
     """Files to remake and overwrite, as flags.
 
     Attributes
@@ -345,7 +358,10 @@ class RemakeSettings(BaseModel):
         #
         primitive_attributes = ["products", "main"]
         for attribute in primitive_attributes:
-            model[attribute] = self.get(key=attribute, **values)
+            ##
+            attribute_value = self.get(key=attribute, **values)
+            if attribute_value is not None:
+                model[attribute] = attribute_value
 
         #
         super().__init__(**model)
@@ -364,7 +380,7 @@ class RemakeSettings(BaseModel):
             return [file_type for file_type, remade in self.__dict__.items() if remade]
 
     @staticmethod
-    def get(key: str, **kwargs) -> bool | None:
+    def get(key: str, **kwargs) -> bool | Self | None:
         """Get the value for a remake setting from user input, preferring
         CLI-passed values over file-passed values.
 
@@ -375,9 +391,19 @@ class RemakeSettings(BaseModel):
 
         Returns
         -------
-        bool | None
+        bool | Self | None
             Value of setting, if it is set by user, and None otherwise.
         """
+        # Get setting from this or child class
+        if key == "remake":
+            ## This setting object has been made by a child class
+            if (key in kwargs) and isinstance(kwargs.get(key), RemakeSettings):
+                return kwargs.get(key)
+
+            ## This setting object has not yet been made
+            else:
+                return RemakeSettings(**kwargs)
+
         # Get setting from CLI
         if f"remake_{key}" in kwargs:
             return kwargs[f"remake_{key}"]
@@ -388,7 +414,7 @@ class RemakeSettings(BaseModel):
             return True
 
 
-class RuntimeSettings(BaseModel):
+class RuntimeSettings(BaseSettings):
     """Settings for the runtime of a J-HIVE program.
 
     Attributes
@@ -432,8 +458,8 @@ class RuntimeSettings(BaseModel):
             model |= get_value(key=attribute, **values)
 
         #
-        model |= get_value(key="stages", cls=StageSettings, **values)
-        model |= get_value(key="remake", cls=RemakeSettings, **values)
+        model |= get_value(key="stages", cls=StageSettings, new=True, **values)
+        model |= get_value(key="remake", cls=RemakeSettings, new=True, **values)
 
         #
         super().__init__(**model)
@@ -473,7 +499,7 @@ class RuntimeSettings(BaseModel):
         return logs.setup(path=path, level=self.log_level)
 
 
-class ScienceSettings(BaseModel):
+class ScienceSettings(BaseSettings):
     """Settings for the scientific algorithms of a J-HIVE program.
 
     Attributes
@@ -499,7 +525,7 @@ class ScienceSettings(BaseModel):
         #
         primitive_attributes = ["minimum", "scale"]
         for attribute in primitive_attributes:
-            model |= get_value(key=attribute, get=ScienceSettings.get, **values)
+            model |= get_value(key=attribute, cls=ScienceSettings, **values)
 
         #
         ## NOTE Child classes of this class MUST pass these kwargs to the init
@@ -514,6 +540,9 @@ class ScienceSettings(BaseModel):
         last_object = get_value(key="last_object", **values) | get_value(
             key="last", **values
         )
+        first_object = None if len(first_object) == 0 else first_object
+        last_object = None if len(last_object) == 0 else last_object
+
         ficls_attributes = [
             "fields",
             "image_versions",
@@ -522,7 +551,7 @@ class ScienceSettings(BaseModel):
             "objects",
         ]
         ficls_model = [
-            get_value(key=attribute, cls=FICL, **values)[attribute]
+            FICL.get(key=attribute, required=attribute != "objects", **values)
             for attribute in ficls_attributes
         ]
 
@@ -552,8 +581,8 @@ class ScienceSettings(BaseModel):
                     "process_count": runtime.process_count,
                     "first_object": first_object,
                     "last_object": last_object,
-                    "catalog": values[f"{ficl_str}_catalog"],
-                    "science": values[f"{ficl_str}_science"],
+                    "catalog": values.get(f"{ficl_str}_catalog"),
+                    "science": values.get(f"{ficl_str}_science"),
                 }
 
                 ##
@@ -561,6 +590,7 @@ class ScienceSettings(BaseModel):
 
             ##
             except Exception as e:
+                print(e)
                 continue
 
         #
@@ -626,8 +656,10 @@ class JHIVESettings(BaseSettings):
         values = get_all_values(**kwargs)
 
         #
-        model |= get_value(key="runtime", cls=RuntimeSettings, **values)
-        model |= get_value(key="science", cls=ScienceSettings, **values | model)
+        model |= get_value(key="runtime", cls=RuntimeSettings, new=True, **values)
+        model |= get_value(
+            key="science", cls=ScienceSettings, new=True, **values | model
+        )
 
         #
         super().__init__(**model)
@@ -738,6 +770,7 @@ def get_all_values(**kwargs) -> dict[str,]:
 def get_value(
     key: str,
     cls: type[BaseSettings] = BaseSettings,
+    new: bool = False,
     **values,
 ) -> dict[str,]:
     #
@@ -745,7 +778,7 @@ def get_value(
         return {key: cls.get(key, **values)}
 
     #
-    elif cls is BaseSettings:
+    elif (cls is BaseSettings) or (not new):
         return {}
 
     #
