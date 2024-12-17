@@ -141,6 +141,12 @@ class FICL(BaseSettings):
     def __eq__(self, other: Self) -> bool:
         return (isinstance(other, FICL)) and (str(self) == str(other))
 
+    def __lt__(self, other: Self) -> bool:
+        return (isinstance(other, FICL)) and (str(self) < str(other))
+
+    def __gt__(self, other: Self) -> bool:
+        return (isinstance(other, FICL)) and (str(self) > str(other))
+
     def to_dict(self) -> dict[str, str | list[int] | tuple[float, float]]:
         #
         model = {
