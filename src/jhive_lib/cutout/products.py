@@ -57,8 +57,8 @@ def make_stamp(
     stamp = Cutout2D(data=image, position=position, size=image_size, wcs=wcs)
 
     # Get nonzero and shape correctness of stamp
-    max_zero_fraction = 0.3
-    zero_ratio = len(np.where(stamp.data == 0.0)) / len(stamp.data.flatten())
+    max_zero_fraction = 0.25
+    zero_ratio = len(np.where(stamp.data <= 0.0)[0]) / len(stamp.data.flatten())
     stamp_has_nonzero_data = zero_ratio <= max_zero_fraction
     stamp_is_correct_shape = stamp.data.shape == (image_size, image_size)
 
