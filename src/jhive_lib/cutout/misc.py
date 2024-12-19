@@ -330,7 +330,7 @@ def get_objects(
         column_name = f"{filter_short}_corr_1"
         ingest_objects = []
         for object in sorted_objects:
-            if ingest_flags[object][column_name]:
+            if ingest_flags[object - 1][column_name]:
                 ingest_objects.append(object)
         sorted_objects = ingest_objects
 
