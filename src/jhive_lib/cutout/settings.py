@@ -12,6 +12,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Annotated, Literal, Self, Any
 
+# TODO temp
+from astropy.table import Table
 import yaml
 from pydantic import (
     BaseModel,
@@ -118,6 +120,8 @@ class FICL(BaseSettings):
             objects=kwargs.get("objects"),
             first_object=kwargs.get("first_object"),
             last_object=kwargs.get("last_object"),
+            ingest_flags=kwargs.get("ingest_flags"),
+            filter=kwargs.get("filter"),
         )
 
         #
@@ -515,13 +519,13 @@ class ScienceSettings(BaseSettings):
         default 32.
     scale : float
         Multiplier on initial radius to determine image size, as a positive
-        float, by default 20.0.
+        float, by default 15.0.
     ficls : list[FICL]
         FICLs over which to run program, by default empty.
     """
 
     minimum: PositiveInt = 32
-    scale: PositiveFloat = 1.0
+    scale: PositiveFloat = 15.0
     ficls: list[FICL]
 
     def __init__(self, **values):
@@ -576,6 +580,10 @@ class ScienceSettings(BaseSettings):
                 ):
                     continue
 
+                ## TODO so temporary
+                ingest_flags_path = f"data/input/{possible_ficl[0]}_ingest_flags.fits"
+                ingest_flags = Table.read(ingest_flags_path)
+
                 ##
                 ficl_model = {
                     "field": possible_ficl[0],
@@ -589,6 +597,7 @@ class ScienceSettings(BaseSettings):
                     "last_object": last_object,
                     "catalog": values.get(f"{ficl_str}_catalog"),
                     "science": values.get(f"{ficl_str}_science"),
+                    "ingest_flags": ingest_flags,
                 }
 
                 ##

@@ -15,6 +15,11 @@ from astropy.table import Table
 # Constants
 
 
+DEFAULT_PIXSCALE = 0.04
+"""Default pixel scale, 40mas/pixel.
+"""
+
+
 PHOTOMETRY_ZEROPOINT = 23.9
 """AB zeropoint for fluxes from the DJA photometric catalogs.
 """

@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime
 
 import numpy as np
+from astropy.table import Table
 from tqdm import tqdm
 
 from . import science
@@ -275,6 +276,8 @@ def get_objects(
     objects: list[int] | None,
     first_object: int | None,
     last_object: int | None,
+    ingest_flags: Table | None = None,
+    filter: str | None = None,
 ) -> list[int]:
     """Get a list of objects for a FICL, as a list of integer IDs from the
     corresponding photometric catalog.
@@ -319,6 +322,17 @@ def get_objects(
     # Set base objects if specifically listed
     else:
         sorted_objects = sorted(objects)
+
+    # Get list of objects flagged for ingest
+    if ingest_flags is not None:
+        filter_split = filter.split("-")
+        filter_short = filter_split[0 if "clear" in filter_split[1] else 1]
+        column_name = f"{filter_short}_corr_1"
+        ingest_objects = []
+        for object in sorted_objects:
+            if ingest_flags[object][column_name]:
+                ingest_objects.append(object)
+        sorted_objects = ingest_objects
 
     # Get start index from base count and process settings
     total_object_count = len(sorted_objects)
