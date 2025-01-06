@@ -23,7 +23,7 @@ from pydantic import (
     PositiveFloat,
 )
 
-from . import logs, misc, science
+from . import header, logs, misc
 
 
 # Constants
@@ -112,7 +112,8 @@ class FICL(BaseSettings):
             raise FileNotFoundError("science frame missing")
 
         #
-        pixscale = science.get_pixscale(path=science_path)
+        headers = header.read(path=science_path)
+        pixscale = header.pixscale(headers=headers)
         objects = misc.get_objects(
             path=catalog_path,
             process_id=kwargs.get("process_id"),
@@ -150,6 +151,9 @@ class FICL(BaseSettings):
 
     def __gt__(self, other: Self) -> bool:
         return (isinstance(other, FICL)) and (str(self) > str(other))
+
+    def get_tag(self) -> str:
+        return f"{self.field}-{self.image_version}"
 
     def to_dict(self) -> dict[str, str | list[int] | tuple[float, float]]:
         #

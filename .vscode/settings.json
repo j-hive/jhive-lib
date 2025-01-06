@@ -6,6 +6,7 @@
     "python.testing.pytestEnabled": true,
     "cSpell.words": [
         "abell",
+        "arcsec",
         "arcseconds",
         "catver",
         "catvers",
@@ -22,8 +23,11 @@
         "nanmin",
         "PIXELSCL",
         "pixscale",
+        "stsci",
         "unflagged",
-        "zeropoint"
+        "zeropoint",
+        "zeropoints",
+        "Zeropoints"
     ],
     "cSpell.ignoreWords": [
         "EXPTIME",

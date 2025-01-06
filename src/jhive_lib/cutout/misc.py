@@ -11,7 +11,7 @@ import numpy as np
 from astropy.table import Table
 from tqdm import tqdm
 
-from . import science
+from . import header
 
 
 # Functions
@@ -266,7 +266,16 @@ def get_alternate_end_tags() -> list[str]:
     return ["drc", "drz"]
 
 
-# FICLO
+# FICLO TODO maybe move to class
+
+
+def clean_filter(filter: str) -> str:
+    # Get cleaned filter name
+    if "-" in filter:
+        filters = filter.split("-")
+        filter = filters[1] if "clear" in filters[0] else filters[0]
+
+    return filter
 
 
 def get_objects(
@@ -307,7 +316,7 @@ def get_objects(
     # Set base objects as all possible objects if not specifically listed
     if objects is None:
         # Get all possible objects from photometric catalog
-        sorted_objects = sorted(science.get_all_objects(input_catalog_path=path))
+        sorted_objects = sorted(header.ids(path))
 
         # Remove all objects before first object
         if first_object is not None:

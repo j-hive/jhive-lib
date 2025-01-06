@@ -1,455 +1,67 @@
-"""Scientific calculation and file functions.
+"""Convert and calculate scientific parameters.
 """
 
 # Imports
 
 
-from pathlib import Path
-
 import numpy as np
-from astropy.coordinates import SkyCoord
-from astropy.io import fits
-from astropy.table import Table
-
-
-# Constants
-
-
-DEFAULT_PIXSCALE = 0.04
-"""Default pixel scale, 40mas/pixel.
-"""
-
-
-PHOTOMETRY_ZEROPOINT = 23.9
-"""AB zeropoint for fluxes from the DJA photometric catalogs.
-"""
-
-
-APERTURE_1_RADIUS = 0.25
-"""Radius of aperture 1, in arcseconds, corresponding to retrieving
-'filter_corr_1' for flux.
-
-See Also
---------
-https://dawn-cph.github.io/dja/blog/2023/07/14/photometric-catalog-demo/
-    Other aperture radii, under 'Photometric apertures'.
-"""
 
 
 # Functions
 
 
-## FITS
+## Conversion
 
 
-def get_fits_data(
-    path: Path, hdu: str | int = "PRIMARY"
-) -> tuple[np.ndarray, fits.Header]:
-    """Get the image data and headers from a FITS file.
-
-    Closes the file so the limit of open files is not encountered.
+def arcsec_to_px(distance: float, pixscale: float) -> float:
+    """Convert a distance in arcseconds to pixels.
 
     Parameters
     ----------
-    path : Path
-        Path to FITS file.
-    hdu : int | str, optional
-        Index in HDU list at which to retrieve HDU, by default "PRIMARY".
-
-    Returns
-    -------
-    tuple[np.ndarray, fits.Header]
-        The image as a 2D float array, and its corresponding header object.
-    """
-    # Open FITS file
-    fits_file = fits.open(path)
-    fits_hdu: fits.PrimaryHDU = fits_file[hdu]
-
-    # Get data and headers from file
-    image, headers = fits_hdu.data, fits_hdu.header
-
-    # Close file and return
-    fits_file.close()
-    return image, headers
-
-
-def get_zeropoint(headers: fits.Header, magnitude_system: str = "AB") -> float:
-    """Calculate the zeropoint of an observation.
-
-    If the observation's headers contains the keyword 'ZP', this will be the
-    returned value, otherwise, calculate from the 'AB' or 'ST' magnitude system
-    formulas.
-
-    Parameters
-    ----------
-    headers : fits.Header
-        Headers of this observation's FITS file.
-    magnitude_system : str, optional
-        Magnitude system by which to calculate zeropoint, by default "AB".
+    distance : float
+        Distance, in arcsec.
+    pixscale : float
+        Pixel scale, in arcsec / px.
 
     Returns
     -------
     float
-        Zeropoint of this observation.
-
-    Raises
-    ------
-    NotImplementedError
-        Unrecognized magnitude system. Only 'AB' and 'ST' implemented.
+        Distance, in px.
     """
-    # If zeropoint stored in headers, return
-    if "ZP" in headers:
-        return headers["ZP"]
-
-    # Otherwise, calculate zeropoint from magnitude system
-    match magnitude_system:
-        case "AB":
-            return (
-                -2.5 * np.log10(headers["PHOTFLAM"])
-                - 5 * (np.log10(headers["PHOTPLAM"]))
-                - 2.408
-            )
-        case "ST":
-            return -2.5 * np.log10(headers["PHOTFLAM"]) - 21.1
-        case _:
-            raise NotImplementedError(
-                f"magnitude system {magnitude_system} not implemented"
-            )
+    return distance / pixscale
 
 
-def get_integrated_magnitude_from_headers(headers: fits.Header) -> float:
-    """Get the integrated magnitude for a FICLO's product from its headers.
+def px_to_arcsec(distance: float, pixscale: float) -> float:
+    """Convert a distance in pixels to arcseconds.
 
     Parameters
     ----------
-    headers : fits.Header
-        Headers for this FICLO product.
+    distance : float
+        Distance, in px.
+    pixscale : float
+        Pixel scale, in arcsec / px.
 
     Returns
     -------
     float
-        Integrated magnitude for this FICLO product.
+        Distance, in arcsec.
     """
-    return headers["IM"]
+    return distance * pixscale
 
 
-def get_surface_brightness_from_headers(headers: fits.Header) -> float:
-    """Get the surface brightness for a FICLO's product from its headers.
-
-    Parameters
-    ----------
-    headers : fits.Header
-        Headers for this FICLO product.
-
-    Returns
-    -------
-    float
-        Surface brightness for this FICLO product.
-    """
-    return headers["SB"]
-
-
-## Photometric Catalog
-
-
-def get_all_objects(input_catalog_path: Path) -> list[int]:
-    """Get a list of all object integer IDs in a catalog.
-
-    Parameters
-    ----------
-    input_catalog_path : Path
-        Path to input catalog FITS file.
-
-    Returns
-    -------
-    list[int]
-        List of all integer IDs corresponding to each object's ID in the input
-        catalog.
-    """
-    # Read input catalog
-    input_catalog = Table.read(input_catalog_path)
-
-    # Return list of IDs as integers
-    return [int(id_object) for id_object in input_catalog["id"]]
-
-
-def get_unflagged_objects(
-    objects: list[int], ingest_catalog_path: Path, filter: str
-) -> list[int]:
-    """Get a list of object IDs not flagged in a passed ingest catalog.
-
-    Parameters
-    ----------
-    objects : list[int]
-        Initial list of object IDs.
-    ingest_catalog_path : Path
-        Catalog with a row for each object, with a general and per-filter
-        quality flag.
-    filter : str
-        Filter name.
-
-    Returns
-    -------
-    list[int]
-        List of IDs validated against ingest catalog.
-    """
-    # Read ingest catalog
-    ingest_catalog = Table.read(ingest_catalog_path)
-
-    # Get cleaned filter name
-    if "-" in filter:
-        filter_split = filter.split("-")
-        band = filter_split[1 if "clear" in filter_split[0] else 0]
-
-    # Iterate over each object in initial list and add to new list if not
-    # flagged
-    unflagged_objects = []
-    flag_header = f"ingest_{band}"
-    for object in objects:
-        if not ingest_catalog[ingest_catalog["id"] == object][flag_header]:
-            unflagged_objects.append(object)
-
-    # Return not flagged objects
-    return unflagged_objects
-
-
-def get_catalog_row(input_catalog: Table, object: int) -> Table:
-    """Get an object's data row in its corresponding photometric catalog.
-
-    Parameters
-    ----------
-    input_catalog : Table
-        Catalog detailing each identified object in a field.
-    object : int
-        Integer ID of object in catalog.
-
-    Returns
-    -------
-    Table
-        Data row of object, if it is found.
-    """
-    return input_catalog[input_catalog["id"] == object]
-
-
-def get_catalog_datum(
-    key: str,
-    type: type,
-    row: Table | None = None,
-    input_catalog: Table | None = None,
-    object: int | None = None,
-) -> bool | int | float:
-    """Get a casted datum from a catalog row.
-
-    Parameters
-    ----------
-    key : str
-        Key in catalog, i.e. column name.
-    type : type
-        Type to which to cast.
-    row : Table | None, optional
-        Data row of object in catalog, by default None (catalog provided).
-    input_catalog : Table | None, optional
-        Catalog detailing each identified object in a field, by default None
-        (row provided).
-    object : int | None, optional
-        Integer ID of object in catalog, by default None (row provided).
-
-
-    Returns
-    -------
-    bool | int | float
-        Casted datum from catalog row.
-    """
-    # Get row if not passed
-    if row is None:
-        row = get_catalog_row(input_catalog, object)
-
-    # Return casted value
-    return type(row[key])
-
-
-def get_position(
-    row: Table | None = None,
-    input_catalog: Table | None = None,
-    object: int | None = None,
-) -> SkyCoord:
-    """Retrieve the RA and Dec of an object, as a SkyCoord object.
-
-    Parameters
-    ----------
-    row : Table | None, optional
-        Data row of object in catalog, by default None (catalog provided).
-    input_catalog : Table | None, optional
-        Catalog detailing each identified object in a field, by default None
-        (row provided).
-    object : int | None, optional
-        Integer ID of object in catalog, by default None (row provided).
-
-    Returns
-    -------
-    SkyCoord
-        Position of object as a SkyCoord astropy object.
-    """
-    return SkyCoord(
-        ra=get_catalog_datum("ra", float, row, input_catalog, object),
-        dec=get_catalog_datum("dec", float, row, input_catalog, object),
-        unit="deg",
-    )
-
-
-def get_flux(
-    filter: str,
-    row: Table | None = None,
-    input_catalog: Table | None = None,
-    object: int | None = None,
-) -> float:
-    """Get the integrated flux for an object, in uJy.
-
-    Parameters
-    ----------
-    filter : str
-        Filter from which to get flux for object.
-    row : Table | None, optional
-        Data row of object in catalog, by default None (catalog provided).
-    input_catalog : Table | None, optional
-        Catalog detailing each identified object in a field, by default None
-        (row provided).
-    object : int | None, optional
-        Integer ID of object in catalog, by default None (row provided).
-
-    Returns
-    -------
-    float
-        Integrated flux within an effective radius for object in a given filter.
-    """
-    # Get cleaned filter name
-    if "-" in filter:
-        filters = filter.split("-")
-        filter = filters[1] if "clear" in filters[0] else filters[0]
-
-    # Get flux from catalog
-    flux_key = f"{filter}_corr_1"
-    return get_catalog_datum(flux_key, float, row, input_catalog, object)
-
-
-def get_flux_radius(
-    row: Table | None = None,
-    input_catalog: Table | None = None,
-    object: int | None = None,
-) -> float:
-    """Get the flux radius for an object, in arcseconds.
-
-    Parameters
-    ----------
-    row : Table | None, optional
-        Data row of object in catalog, by default None (catalog provided).
-    input_catalog : Table | None, optional
-        Catalog detailing each identified object in a field, by default None
-        (row provided).
-    object : int | None, optional
-        Integer ID of object in catalog, by default None (row provided).
-
-    Returns
-    -------
-    float
-        Flux radius of object.
-    """
-    return get_catalog_datum("flux_radius", float, row, input_catalog, object)
-
-
-def get_kron_radius(
-    row: Table | None = None,
-    input_catalog: Table | None = None,
-    object: int | None = None,
-) -> float:
-    """Get the Kron radius for an object, in pixels.
-
-    Parameters
-    ----------
-    row : Table | None, optional
-        Data row of object in catalog, by default None (catalog provided).
-    input_catalog : Table | None, optional
-        Catalog detailing each identified object in a field, by default None
-        (row provided).
-    object : int | None, optional
-        Integer ID of object in catalog, by default None (row provided).
-
-    Returns
-    -------
-    float
-        Characteristic radius of object.
-    """
-    return get_catalog_datum("kron_radius", float, row, input_catalog, object)
-
-
-def get_a(
-    row: Table | None = None,
-    input_catalog: Table | None = None,
-    object: int | None = None,
-) -> float:
-    """Get the half light radius for an object, in pixels.
-
-    Parameters
-    ----------
-    row : Table | None, optional
-        Data row of object in catalog, by default None (catalog provided).
-    input_catalog : Table | None, optional
-        Catalog detailing each identified object in a field, by default None
-        (row provided).
-    object : int | None, optional
-        Integer ID of object in catalog, by default None (row provided).
-
-    Returns
-    -------
-    float
-        Half light radius of object.
-    """
-    return get_catalog_datum("a_image", float, row, input_catalog, object)
-
-
-def get_axis_ratio(
-    row: Table | None = None,
-    input_catalog: Table | None = None,
-    object: int | None = None,
-) -> float:
-    """Get the axis ratio for an object.
-
-    Parameters
-    ----------
-    row : Table | None, optional
-        Data row of object in catalog, by default None (catalog provided).
-    input_catalog : Table | None, optional
-        Catalog detailing each identified object in a field, by default None
-        (row provided).
-    object : int | None, optional
-        Integer ID of object in catalog, by default None (row provided).
-
-    Returns
-    -------
-    float
-        Axis ratio of object.
-    """
-    a = get_catalog_datum("a_image", float, row, input_catalog, object)
-    b = get_catalog_datum("b_image", float, row, input_catalog, object)
-    return b / a
-
-
-## Calculation
-
-
-def get_image_size(radius: float, scale: float, minimum: int) -> int:
-    """Calculate the square pixel length of an image containing an object, from
-    its cataloged Kron radius.
+def image_size(radius: float, scale: float, minimum: int) -> int:
+    """Calculate the square pixel dimension of an object's image, from a
+    characteristic radius and scale, in px.
 
     Parameters
     ----------
     radius : float
-        Characteristic radius of object, in pixels. By default, known as Kron
-        radius.
+        Characteristic radius of object, in px.
     scale : float
-        Scale factor by which to multiply initial radius.
+        Multiplicative scale factor.
     minimum : int
-        Minimum image size, in pixels.
+        Minimum image size, in px.
+
 
     Returns
     -------
@@ -463,19 +75,68 @@ def get_image_size(radius: float, scale: float, minimum: int) -> int:
     return np.nanmax([image_size, minimum])
 
 
-def get_integrated_magnitude(
-    flux: float, zeropoint: float = PHOTOMETRY_ZEROPOINT
-) -> float:
-    """Calculate an estimate of the integrated magnitude of an object, as an AB
-    magnitude.
+## Calculation
+
+
+def ab_zeropoint(photflam: float, photplam: float) -> float:
+    """Calculate the AB instrumental zeropoint magnitude, at which one count per
+    second is produced [1]_.
+
+    Parameters
+    ----------
+    photflam : float
+        Inverse sensitivity, i.e. the scaling factor necessary to transform an
+        instrumental flux in units of electrons per second to a physical flux
+        density, in erg / (A * electron * cm^2).
+    photplam : float
+        Pivot wavelength, in A.
+
+    Returns
+    -------
+    float
+        AB instrumental zeropoint magnitude.
+
+    References
+    ----------
+    .. [1] “Zeropoints.” STScI,
+        www.stsci.edu/hst/instrumentation/acs/data-analysis/zeropoints.
+    """
+    return -2.5 * np.log10(photflam) - 5 * np.log10(photplam) - 2.408
+
+
+def st_zeropoint(photflam: float) -> float:
+    """Calculate the ST instrumental zeropoint magnitude, at which one count per
+    second is produced [1]_.
+
+    Parameters
+    ----------
+    photflam : float
+        Inverse sensitivity, i.e. the scaling factor necessary to transform an
+        instrumental flux in units of electrons per second to a physical flux
+        density, in erg / (A * electron * cm^2).
+
+    Returns
+    -------
+    float
+        ST instrumental zeropoint magnitude.
+
+    References
+    ----------
+    .. [1] “Zeropoints.” STScI,
+        www.stsci.edu/hst/instrumentation/acs/data-analysis/zeropoints.
+    """
+    return -2.5 * np.log10(photflam) - 21.1
+
+
+def integrated_magnitude(flux: float, zeropoint: float) -> float:
+    """Calculate the integrated magnitude of an object.
 
     Parameters
     ----------
     flux : float
-        Integrated flux across an effective radius (distinct from the radius
-        parameter for this function). By default, from the photometric catalog.
-    zeropoint : float, optional
-        Zeropoint magnitude for this field, as an AB magnitude, by default 23.9.
+        Integrated flux across an object's effective radius.
+    zeropoint : float
+        Zeropoint magnitude for this field.
 
     Returns
     -------
@@ -491,33 +152,28 @@ def get_integrated_magnitude(
     if flux <= 0:
         raise ValueError(f"flux {flux} negative")
 
-    # Calculate and return magnitude from integrated flux and offset by zeropoint
-    magnitude = -2.5 * np.log10(flux) + zeropoint
-    return magnitude
+    # Calculate and return magnitude from integrated flux, offset by zeropoint
+    return -2.5 * np.log10(flux) + zeropoint
 
 
-def get_surface_brightness(
+def surface_brightness(
     flux: float,
-    radius: float = APERTURE_1_RADIUS,
-    pixscale: tuple[int, int] | None = None,
-    zeropoint: float = PHOTOMETRY_ZEROPOINT,
+    zeropoint: float,
+    radius: float,
+    pixscale: float | None = None,
 ) -> float:
-    """Calculate an estimate of the surface brightness of an object, as an AB
-    magnitude.
+    """Calculate an estimate of the surface brightness of an object.
 
     Parameters
     ----------
     flux : float
-        Integrated flux across an effective radius (distinct from the radius
-        parameter for this function). By default, from the photometric catalog.
+        Integrated flux across an object's effective radius.
+    zeropoint : float
+        Zeropoint magnitude for this field.
     radius : float
-        Characteristic radius of object, in arcseconds or pixels, by default
-        0.25".
-    pixscale : tuple[int, int] | None, optional
-        Pixel scale along the x and y axes, respectively, in arcseconds per
-        pixel, by default None (radius in arcseconds).
-    zeropoint : float, optional
-        Zeropoint magnitude for this field, as an AB magnitude, by default 23.9.
+        Characteristic radius of object, in arcsec or px.
+    pixscale : float | None, optional
+        Pixel scale, in arcsec / px, by default None (radius in arcsec).
 
     Returns
     -------
@@ -533,89 +189,13 @@ def get_surface_brightness(
     if flux <= 0:
         raise ValueError(f"flux {flux} negative")
 
-    # Calculate magnitude from integrated flux and offset by zeropoint
+    # Calculate magnitude from integrated flux, offset by zeropoint
     magnitude = -2.5 * np.log10(flux) + zeropoint
 
     # Calculate area within radius as squared arcseconds
-    radius_in_as = radius * (1 if pixscale is None else max(pixscale))
-    area = np.pi * np.power(radius_in_as, 2)
+    radius_in_as = radius * (1 if pixscale is None else pixscale)
+    area = np.pi * radius_in_as**2
     offset = 2.5 * np.log10(area)
 
-    # Calculate and return surface brightness as magnitude offset by area
+    # Calculate and return surface brightness as magnitude, offset by area
     return magnitude + offset
-
-
-def get_length_in_px(length: float, pixscale: tuple[float, float]) -> float:
-    """Get a length in pixels, from arcseconds.
-
-    Parameters
-    ----------
-    length : float
-        Length to convert to pixels, in arcseconds.
-    pixscale : tuple[float,float]
-        Pixel scale along each axis, in arcseconds per pixel.
-
-    Returns
-    -------
-    float
-        Length in pixels.
-    """
-    return length / max(pixscale)
-
-
-def get_pixscale(path: Path) -> tuple[float, float]:
-    """Get an observation's pixscale from its FITS image frame.
-
-    Used because not every frame has the same pixel scale. For the most
-    part, long wavelength filtered observations have scales of 0.04 "/pix,
-    and short wavelength filters have scales of 0.02 "/pix.
-
-    Parameters
-    ----------
-    path : Path
-        Path to FITS frame.
-
-    Returns
-    -------
-    tuple[float, float]
-        Pixel scale along x and y axes, respectively, in arcseconds per pixel.
-
-    Raises
-    ------
-    KeyError
-        Coordinate transformation matrix element headers missing from frame.
-    """
-    # Get headers from FITS file
-    headers = fits.getheader(path)
-
-    # Get pixel scale if directly set as header
-    if "PIXELSCL" in headers:
-        pixscale_str = headers["PIXELSCL"]
-
-        # Try to get pixel scale from header as float
-        try:
-            pixscale = float(pixscale_str)
-            return (pixscale, pixscale)
-
-        # Try to get pixel scale from header as string
-        except:
-            try:
-                pixscale = float(pixscale_str.split("mas")) * 1e-3
-                return (pixscale, pixscale)
-
-            # Other formats unknown
-            except:
-                raise ValueError(f"pixel scale {pixscale_str} unrecognized")
-
-    # Get pixel scale from coordinate matrix headers if not set as header
-    else:
-        # Raise error if keys not found in header
-        if any(
-            [header not in headers for header in ["CD1_1", "CD2_2", "CD1_2", "CD2_1"]]
-        ):
-            raise KeyError(f"frame {path.name} missing coordinate matrix headers")
-
-        # Calculate and set pixel scales
-        pixscale_x = np.sqrt(headers["CD1_1"] ** 2 + headers["CD1_2"] ** 2) * 3600
-        pixscale_y = np.sqrt(headers["CD2_1"] ** 2 + headers["CD2_2"] ** 2) * 3600
-        return (pixscale_x, pixscale_y)
