@@ -352,7 +352,7 @@ def get_objects(
         # Iterate over each object and ingest if flagged
         else:
             ingest_objects = []
-            for object in objects:
+            for object in sorted_objects:
                 if ingest_flags[ingest_flags["id"] == object][flag_header]:
                     ingest_objects.append(object)
             sorted_objects = ingest_objects
