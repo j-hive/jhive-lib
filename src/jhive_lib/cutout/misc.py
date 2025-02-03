@@ -343,7 +343,9 @@ def get_objects(
         band = filter_split[1 if "clear" in filter_split[0] else 0]
 
         # Skip if filter is missing from ingest catalog
-        flag_header = f"ingest_{band}"
+        # TODO temporary - ingest all objects marked for visualization
+        flag_header = f"ingest_viz"
+        # flag_header = f"ingest_{band}"
         if flag_header not in ingest_flags:
             pass
 
