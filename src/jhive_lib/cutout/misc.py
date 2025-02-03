@@ -299,13 +299,17 @@ def get_objects(
         Number of processes in batch.
     process_id : int
         ID of process in batch.
-    objects : list[int] | None
-        List of object IDs.
+    objects : list[int] | None, optional
+        List of object IDs, by default None.
         Note this setting overrides the first and last object settings.
-    first_object : int | None
-        ID of first object in batch.
-    last_object : int | None
-        ID of last object in batch.
+    first_object : int | None, optional
+        ID of first object in batch, by default None.
+    last_object : int | None, optional
+        ID of last object in batch, by default None.
+    ingest_flags : Table | None, optional
+        Catalog flagging objects to be ingested into J-HIVE, by default None.
+    filter : str | None, optional
+        Name of filter of objects which to ingest, by default None.
 
     Returns
     -------
@@ -334,14 +338,22 @@ def get_objects(
 
     # Get list of objects flagged for ingest
     if ingest_flags is not None:
+        # Get wavelength band from both filters
         filter_split = filter.split("-")
-        filter_short = filter_split[0 if "clear" in filter_split[1] else 1]
-        column_name = f"{filter_short}_corr_1"
-        ingest_objects = []
-        for object in sorted_objects:
-            if ingest_flags[object - 1][column_name]:
-                ingest_objects.append(object)
-        sorted_objects = ingest_objects
+        band = filter_split[1 if "clear" in filter_split[0] else 0]
+
+        # Skip if filter is missing from ingest catalog
+        flag_header = f"ingest_{band}"
+        if flag_header not in ingest_flags:
+            pass
+
+        # Iterate over each object and ingest if flagged
+        else:
+            ingest_objects = []
+            for object in objects:
+                if ingest_flags[ingest_flags["id"] == object][flag_header]:
+                    ingest_objects.append(object)
+            sorted_objects = ingest_objects
 
     # Get start index from base count and process settings
     total_object_count = len(sorted_objects)
