@@ -346,7 +346,7 @@ def get_objects(
         # TODO temporary - ingest all objects marked for visualization
         flag_header = f"ingest_viz"
         # flag_header = f"ingest_{band}"
-        if flag_header not in ingest_flags:
+        if flag_header not in ingest_flags.keys():
             pass
 
         # Iterate over each object and ingest if flagged

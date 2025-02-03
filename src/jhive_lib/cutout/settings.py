@@ -112,7 +112,7 @@ class FICL(BaseSettings):
             raise FileNotFoundError("science frame missing")
 
         #
-        headers = header.read(path=science_path)
+        headers = header.read(path=science_path)[1]
         pixscale = header.pixscale(headers=headers)
         objects = misc.get_objects(
             path=catalog_path,
