@@ -58,7 +58,7 @@ def make_stamp(
 
     # Get nonzero and shape correctness of stamp
     max_zero_fraction = 0.75
-    zero_ratio = len(np.where(stamp.data <= 0.0)[0]) / len(stamp.data.flatten())
+    zero_ratio = len(np.where(stamp.data == 0.0)[0]) / len(stamp.data.flatten())
     stamp_has_nonzero_data = zero_ratio <= max_zero_fraction
     stamp_is_correct_shape = stamp.data.shape == (image_size, image_size)
 
